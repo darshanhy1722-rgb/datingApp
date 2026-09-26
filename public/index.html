@@ -9,6 +9,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
+  <script>
+    // Apply the saved colour theme before the first paint (see applyTheme in app.js).
+    (function () {
+      var accent = 'yellow', mode = 'light';
+      try { accent = localStorage.getItem('accent') || accent; mode = localStorage.getItem('mode') || mode; } catch (e) {}
+      var dark = mode === 'dark' || (mode === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.accent = accent;
+      document.documentElement.dataset.mode = dark ? 'dark' : 'light';
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
@@ -82,7 +92,7 @@
           <button class="icon-btn" id="discover-help" data-icon="help" aria-label="How Discover works"></button>
         </header>
         <div class="pad-x">
-          <span class="pill-honey" id="refresh-pill"></span>
+          <span class="pill-accent" id="refresh-pill"></span>
           <p class="lead">Connect over common ground with people who match your vibe, refreshed every day.</p>
         </div>
         <div id="discover-body"></div>
@@ -151,6 +161,7 @@
         <header class="bar">
           <h1 class="display title">Profile</h1>
           <div class="bar-actions">
+            <button class="icon-btn" id="theme-btn" data-icon="palette" aria-label="App colour"></button>
             <button class="icon-btn" id="safety-btn" data-icon="help" aria-label="Help and safety"></button>
             <button class="icon-btn" id="settings-btn" data-icon="gear" aria-label="Settings"></button>
           </div>

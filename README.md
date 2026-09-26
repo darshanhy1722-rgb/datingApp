@@ -9,6 +9,10 @@ style: white screens, bold sans-serif type, black buttons, warm yellow accents, 
 bar with **Profile · Discover · People · Liked You · Chats**. It also has bottom sheets, toasts,
 loading placeholders and an animated "It's a match!" screen.
 
+**App colour:** tap the 🎨 palette icon on the Profile tab (or Settings → App colour) to pick an
+accent colour (**Honey** yellow, **Rose** pink, **Ocean** blue, **Lavender** purple, **Mint** green or
+**Sunset** orange) and **Light / Dark / Auto** appearance. The choice is saved on that device.
+
 - **Backend:** Node.js + Express, with Node's built-in SQLite (`node:sqlite`), so there are no native dependencies
 - **Frontend:** plain HTML/CSS/JS served by the same server, with no build step
 

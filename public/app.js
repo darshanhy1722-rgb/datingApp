@@ -69,6 +69,7 @@ const ICONS = {
   ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>',
   clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  palette: '<circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A5.7 5.7 0 0 0 22 9.7C22 5.4 17.5 2 12 2Z"/>',
   coins: '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18M7 6h1v4"/>',
 };
 
@@ -300,7 +301,7 @@ function renderProfile(p, actions = {}) {
     parts.push(el('div', { class: 'decide' },
       actions.onPass ? el('button', { class: 'round dark', 'aria-label': 'Pass', onclick: actions.onPass }, icon('x')) : el('span'),
       actions.onSuper
-        ? el('button', { class: 'round honey big', 'aria-label': `SuperSwipe (${left} left today)`, onclick: actions.onSuper },
+        ? el('button', { class: 'round accent big', 'aria-label': `SuperSwipe (${left} left today)`, onclick: actions.onSuper },
           icon('star'), el('span', { class: 'round-count' }, String(left)))
         : el('span'),
       actions.onLike ? el('button', { class: 'round dark', 'aria-label': 'Like', onclick: actions.onLike }, icon('heart')) : el('span')));
@@ -1726,6 +1727,7 @@ $('#settings-btn').addEventListener('click', () => {
     el('h3', { class: 'display sheet-title' }, 'Settings'),
     action('filter', 'Dating filters', filtersSummary(), openFilters),
     action('user', 'Edit profile', null, () => show('edit')),
+    action('palette', 'App colour', `${ACCENTS[storedSetting('accent', 'yellow', ACCENTS)][0]} · ${MODES[storedSetting('mode', 'light', MODES)]}`, openThemeSheet),
     action('logout', 'Log out', state.me.email, logout, 'danger')));
 });
 $('#safety-btn').addEventListener('click', () => {
@@ -1733,9 +1735,87 @@ $('#safety-btn').addEventListener('click', () => {
   renderMyProfile();
 });
 
+// ---- App colour (saved per device in localStorage) ----
+
+const ACCENTS = {
+  yellow: ['Honey', '#fdd85d'],
+  pink: ['Rose', '#ff9fb8'],
+  blue: ['Ocean', '#8cc8ff'],
+  purple: ['Lavender', '#c3adff'],
+  green: ['Mint', '#86e3b8'],
+  orange: ['Sunset', '#ffb27d'],
+};
+const MODES = { light: 'Light', dark: 'Dark', auto: 'Auto' };
+
+function storedSetting(key, fallback, allowed) {
+  try {
+    const value = localStorage.getItem(key);
+    return Object.hasOwn(allowed, value ?? '') ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveSetting(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* private mode: still applies for this visit */ }
+}
+
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+function applyTheme() {
+  const accent = storedSetting('accent', 'yellow', ACCENTS);
+  const mode = storedSetting('mode', 'light', MODES);
+  const html = document.documentElement;
+  html.dataset.accent = accent;
+  html.dataset.mode = mode === 'dark' || (mode === 'auto' && darkQuery.matches) ? 'dark' : 'light';
+  document.querySelector('meta[name=theme-color]').content = getComputedStyle(html).getPropertyValue('--bg').trim();
+}
+
+darkQuery.addEventListener('change', applyTheme);
+
+function openThemeSheet() {
+  const render = () => {
+    const accent = storedSetting('accent', 'yellow', ACCENTS);
+    const mode = storedSetting('mode', 'light', MODES);
+    return el('div', { class: 'stack' },
+      el('h3', { class: 'display sheet-title' }, 'App colour'),
+      el('div', { class: 'swatches' },
+        Object.entries(ACCENTS).map(([key, [name, hex]]) =>
+          el('button', {
+            class: `swatch ${key === accent ? 'active' : ''}`,
+            'aria-pressed': String(key === accent),
+            onclick: () => {
+              saveSetting('accent', key);
+              applyTheme();
+              $('#sheet-body').replaceChildren(render());
+            },
+          }, el('span', { class: 'swatch-dot', style: `background:${hex}` }, icon('check')), name))),
+      el('h3', { class: 'section-head flush' }, 'Appearance'),
+      el('div', { class: 'segmented' },
+        Object.entries(MODES).map(([key, name]) =>
+          el('label', {},
+            el('input', {
+              type: 'radio',
+              name: 'mode',
+              checked: key === mode,
+              onchange: () => {
+                saveSetting('mode', key);
+                applyTheme();
+              },
+            }),
+            el('span', {}, name)))),
+      el('p', { class: 'fine' }, 'Auto follows your phone or computer setting.'),
+      el('button', { class: 'btn btn-primary btn-block', onclick: closeSheet }, 'Done'));
+  };
+  openSheet(render());
+}
+
+$('#theme-btn').addEventListener('click', openThemeSheet);
+
 // ---- Boot ----
 
 (async function init() {
+  applyTheme();
   hydrateIcons();
   state.options = await (await fetch('/api/options')).json();
   if (!state.token) return show('welcome');
