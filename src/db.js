@@ -1,6 +1,6 @@
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS swipes (
   target_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   liked      INTEGER NOT NULL CHECK (liked IN (0, 1)),
   comment    TEXT    NOT NULL DEFAULT '',
+  liked_item TEXT,                            -- JSON: which photo or prompt was liked
   created_at TEXT    NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (swiper_id, target_id)
 );
@@ -83,14 +84,23 @@ CREATE INDEX IF NOT EXISTS idx_swipes_target ON swipes(target_id, liked);
 
 const TABLES = ['messages', 'matches', 'swipes', 'prompts', 'photos', 'sessions', 'users'];
 
+// Step-by-step upgrades from each older version, so existing data is kept.
+const MIGRATIONS = {
+  2: 'ALTER TABLE swipes ADD COLUMN liked_item TEXT;',
+};
+
 function openDb(path = ':memory:') {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA foreign_keys = ON;');
 
   const { user_version: version } = db.prepare('PRAGMA user_version').get();
   const hasUsers = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
-  if (hasUsers && version !== SCHEMA_VERSION) {
-    // Still pre-release: rather than migrating, start over with the new schema.
+  if (hasUsers && version >= 2 && version < SCHEMA_VERSION) {
+    transaction(db, () => {
+      for (let v = version; v < SCHEMA_VERSION; v++) db.exec(MIGRATIONS[v]);
+    });
+  } else if (hasUsers && version !== SCHEMA_VERSION) {
+    // Databases from before v2 have an incompatible layout, so start over.
     console.warn(`Database schema changed (v${version} -> v${SCHEMA_VERSION}); resetting ${path}. Run "npm run seed" for demo data.`);
     db.exec('PRAGMA foreign_keys = OFF;');
     for (const t of TABLES) db.exec(`DROP TABLE IF EXISTS ${t};`);

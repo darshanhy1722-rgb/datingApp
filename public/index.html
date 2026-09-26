@@ -2,172 +2,167 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFC629" />
   <title>Spark</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="topbar hidden" id="topbar">
-    <span class="logo">Spark</span>
-    <nav>
-      <button data-view="discover" class="nav-btn">Discover</button>
-      <button data-view="likes" class="nav-btn">Likes <span id="likes-badge" class="badge hidden"></span></button>
-      <button data-view="matches" class="nav-btn">Matches</button>
-      <button data-view="profile" class="nav-btn">Profile</button>
+  <div class="app">
+    <main class="screen" id="screen">
+
+      <!-- Welcome -->
+      <section id="view-welcome" class="view welcome">
+        <div class="welcome-art" aria-hidden="true">
+          <div class="float-card c1"><span>A</span><p>A perfect first date</p><b>Filter coffee &amp; a long walk</b></div>
+          <div class="float-card c2"><span>R</span><p>Typical Sunday</p><b>Dosa, then a nap</b></div>
+          <div class="float-card c3"><span>K</span><p>I geek out on</p><b>Telescopes</b></div>
+          <div class="float-heart h1"></div>
+          <div class="float-heart h2"></div>
+        </div>
+        <div class="welcome-copy">
+          <div class="brand" data-icon="spark">Spark</div>
+          <h1 class="display">Date with <em>intention.</em></h1>
+          <p>Real profiles, thoughtful prompts, and people who actually want to meet.</p>
+          <button class="btn btn-primary btn-block" id="go-signup">Create account</button>
+          <button class="btn btn-ghost btn-block" id="go-login">I already have an account</button>
+          <p class="fine">You must be 18 or older to use Spark.</p>
+        </div>
+      </section>
+
+      <!-- Log in -->
+      <section id="view-login" class="view pad">
+        <div class="bar plain"><button class="icon-btn" data-go="welcome" data-icon="back" aria-label="Back"></button></div>
+        <h1 class="display big">Welcome back</h1>
+        <p class="muted">Log in to see who's waiting for you.</p>
+        <form id="login-form" class="stack">
+          <label class="field">Email<input name="email" type="email" required autocomplete="email" /></label>
+          <label class="field">Password<input name="password" type="password" required autocomplete="current-password" /></label>
+          <p class="error" id="login-error"></p>
+          <button class="btn btn-primary btn-block" type="submit">Log in</button>
+        </form>
+        <p class="center muted small">New here? <button class="link" data-go="signup">Create an account</button></p>
+      </section>
+
+      <!-- Sign-up and profile wizard (one question per screen) -->
+      <section id="view-setup" class="view setup">
+        <div class="setup-top">
+          <button class="icon-btn" id="setup-back" data-icon="back" aria-label="Back"></button>
+          <div class="progress" id="setup-progress"><div></div></div>
+          <span class="step-count" id="setup-count"></span>
+        </div>
+        <div class="setup-content">
+          <div class="setup-icon" id="setup-icon"></div>
+          <h1 class="display" id="setup-title"></h1>
+          <p class="muted" id="setup-subtitle"></p>
+          <div id="setup-body"></div>
+          <p class="error" id="setup-error"></p>
+        </div>
+        <div class="setup-footer">
+          <button class="btn btn-primary btn-block" id="setup-next">Next</button>
+        </div>
+      </section>
+
+      <!-- Discover -->
+      <section id="view-discover" class="view">
+        <header class="bar">
+          <div class="brand small" data-icon="spark">Spark</div>
+          <button class="icon-btn" id="open-filters" data-icon="sliders" aria-label="Dating filters"></button>
+        </header>
+        <div id="deck" class="deck"></div>
+        <button class="fab-pass hidden" id="pass-btn" data-icon="x" aria-label="Pass"></button>
+      </section>
+
+      <!-- Filters -->
+      <section id="view-filters" class="view">
+        <header class="bar">
+          <button class="icon-btn" id="filters-back" data-icon="back" aria-label="Back"></button>
+          <h2 class="bar-title">Dating filters</h2>
+          <button class="link" id="filters-reset">Reset</button>
+        </header>
+        <form id="filters-form" class="filters"></form>
+      </section>
+
+      <!-- Likes You -->
+      <section id="view-likes" class="view">
+        <header class="bar"><h1 class="display title">Likes You</h1></header>
+        <p class="muted pad-x" id="likes-summary"></p>
+        <div id="likes-grid" class="likes-grid"></div>
+      </section>
+
+      <!-- Someone's profile -->
+      <section id="view-person" class="view">
+        <header class="bar">
+          <button class="icon-btn" id="person-back" data-icon="back" aria-label="Back"></button>
+          <h2 class="bar-title" id="person-title"></h2>
+          <span class="icon-btn-spacer"></span>
+        </header>
+        <div id="person-body" class="deck"></div>
+        <div class="decision-bar hidden" id="person-actions">
+          <button class="fab-pass static" id="person-pass" data-icon="x" aria-label="Pass"></button>
+          <button class="btn btn-honey" id="person-like"><span data-icon="heart"></span>Match</button>
+        </div>
+      </section>
+
+      <!-- Chats -->
+      <section id="view-matches" class="view">
+        <header class="bar"><h1 class="display title">Chats</h1></header>
+        <div id="matches-body"></div>
+      </section>
+
+      <!-- Chat -->
+      <section id="view-chat" class="view chat">
+        <header class="bar chat-bar">
+          <button class="icon-btn" id="chat-back" data-icon="back" aria-label="Back"></button>
+          <button class="chat-with" id="chat-with"></button>
+          <button class="icon-btn" id="chat-more" data-icon="more" aria-label="More"></button>
+        </header>
+        <div id="messages" class="messages"></div>
+        <div id="icebreakers" class="icebreakers"></div>
+        <form id="message-form" class="composer">
+          <input name="body" placeholder="Send a message…" maxlength="2000" autocomplete="off" required />
+          <button class="send-btn" type="submit" data-icon="send" aria-label="Send"></button>
+        </form>
+      </section>
+
+      <!-- My profile -->
+      <section id="view-profile" class="view">
+        <header class="bar"><h1 class="display title">Profile</h1></header>
+        <div id="profile-body"></div>
+      </section>
+    </main>
+
+    <nav class="tabbar hidden" id="tabbar">
+      <button class="tab" data-view="discover"><span data-icon="compass"></span>Discover</button>
+      <button class="tab" data-view="likes"><span data-icon="heart"></span>Likes<span class="badge hidden" id="likes-badge"></span></button>
+      <button class="tab" data-view="matches"><span data-icon="chat"></span>Chats<span class="dot hidden" id="chats-dot"></span></button>
+      <button class="tab" data-view="profile"><span data-icon="user"></span>Profile</button>
     </nav>
-  </header>
 
-  <main id="app">
-    <!-- Log in / create account -->
-    <section id="view-auth" class="view hidden">
-      <div class="card narrow">
-        <h1 class="logo big">Spark</h1>
-        <p class="muted">Meet people who like you back.</p>
-        <div class="tabs">
-          <button class="tab active" data-auth="login">Log in</button>
-          <button class="tab" data-auth="signup">Create account</button>
-        </div>
-
-        <form id="login-form" class="form">
-          <label>Email <input name="email" type="email" required autocomplete="email" /></label>
-          <label>Password <input name="password" type="password" required autocomplete="current-password" /></label>
-          <button class="primary" type="submit">Log in</button>
-        </form>
-
-        <form id="signup-form" class="form hidden">
-          <label>First name <input name="name" required maxlength="50" autocomplete="given-name" /></label>
-          <label>Date of birth <input name="birthdate" type="date" required /></label>
-          <p class="hint" id="dob-hint">You must be 18 or older. Your age is shown on your profile, not your birthday.</p>
-          <fieldset>
-            <legend>I am a</legend>
-            <div class="pills" data-radio="gender"></div>
-          </fieldset>
-          <fieldset>
-            <legend>Show me</legend>
-            <div class="pills" data-radio="interested_in"></div>
-          </fieldset>
-          <label>Email <input name="email" type="email" required autocomplete="email" /></label>
-          <label>Password <input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="At least 8 characters" /></label>
-          <button class="primary" type="submit">Continue</button>
-        </form>
-        <p class="error" id="auth-error"></p>
+    <!-- Bottom sheet (likes, confirmations, menus) -->
+    <div id="sheet" class="sheet-backdrop hidden">
+      <div class="sheet" role="dialog" aria-modal="true">
+        <div class="sheet-handle"></div>
+        <div id="sheet-body"></div>
       </div>
-    </section>
-
-    <!-- Profile setup wizard (also used to edit one section at a time) -->
-    <section id="view-setup" class="view hidden">
-      <div class="card narrow setup">
-        <div class="progress" id="setup-progress"><div></div></div>
-        <p class="muted step-label" id="setup-step-label"></p>
-        <h2 id="setup-title"></h2>
-        <p class="muted" id="setup-subtitle"></p>
-        <div id="setup-body"></div>
-        <p class="error" id="setup-error"></p>
-        <div class="setup-actions">
-          <button class="link" id="setup-back">Back</button>
-          <button class="primary" id="setup-next">Next</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- Discover -->
-    <section id="view-discover" class="view hidden">
-      <div class="view-header">
-        <h2>Discover</h2>
-        <button class="chip-btn" id="open-filters">⚙︎ Filters</button>
-      </div>
-      <div id="deck"></div>
-      <div class="action-bar hidden" id="discover-actions">
-        <button class="round pass" id="pass-btn" title="Pass (←)">✕</button>
-        <button class="round like" id="like-btn" title="Like (→)">♥</button>
-      </div>
-    </section>
-
-    <!-- Filters -->
-    <section id="view-filters" class="view hidden">
-      <div class="view-header">
-        <button class="link" id="filters-back">← Back</button>
-        <h2>Filters</h2>
-        <button class="link" id="filters-reset">Reset</button>
-      </div>
-      <form id="filters-form" class="card form"></form>
-    </section>
-
-    <!-- Likes you -->
-    <section id="view-likes" class="view hidden">
-      <h2>Likes you</h2>
-      <p class="muted">Like them back to match instantly.</p>
-      <div id="likes-grid" class="likes-grid"></div>
-    </section>
-
-    <!-- Someone's full profile (from Likes, or a match) -->
-    <section id="view-person" class="view hidden">
-      <div class="view-header">
-        <button class="link" id="person-back">← Back</button>
-      </div>
-      <div id="person-body"></div>
-      <div class="action-bar hidden" id="person-actions">
-        <button class="round pass" id="person-pass">✕</button>
-        <button class="round like" id="person-like">♥</button>
-      </div>
-    </section>
-
-    <!-- Matches -->
-    <section id="view-matches" class="view hidden">
-      <h2>Matches</h2>
-      <ul id="match-list" class="match-list"></ul>
-    </section>
-
-    <!-- Chat -->
-    <section id="view-chat" class="view hidden">
-      <div class="chat-header">
-        <button class="link" id="chat-back">← Back</button>
-        <button class="chat-with link" id="chat-with" title="View profile"></button>
-        <button class="link danger" id="unmatch-btn">Unmatch</button>
-      </div>
-      <div id="messages" class="messages"></div>
-      <form id="message-form" class="message-form">
-        <input name="body" placeholder="Say something nice…" maxlength="2000" autocomplete="off" required />
-        <button class="primary" type="submit">Send</button>
-      </form>
-    </section>
-
-    <!-- My profile -->
-    <section id="view-profile" class="view hidden">
-      <div class="view-header">
-        <h2>My profile</h2>
-        <button class="link danger" id="logout-btn">Log out</button>
-      </div>
-      <div class="edit-buttons">
-        <button class="chip-btn" data-edit="photos">Edit photos</button>
-        <button class="chip-btn" data-edit="prompts">Edit prompts</button>
-        <button class="chip-btn" data-edit="location">Edit location</button>
-        <button class="chip-btn" data-edit="details">Edit details</button>
-      </div>
-      <p class="muted small">This is how other people see you:</p>
-      <div id="my-profile"></div>
-    </section>
-  </main>
-
-  <!-- Like with a comment -->
-  <div id="like-modal" class="modal hidden">
-    <form class="card narrow" id="like-form">
-      <h3 id="like-title"></h3>
-      <textarea name="comment" rows="3" maxlength="300" placeholder="Add a comment (optional) — it becomes your first message if you match"></textarea>
-      <button class="primary" type="submit">Send like</button>
-      <button class="link" type="button" id="like-cancel">Cancel</button>
-    </form>
-  </div>
-
-  <!-- It's a match -->
-  <div id="match-modal" class="modal hidden">
-    <div class="card narrow center">
-      <div class="match-avatars" id="match-avatars"></div>
-      <h2 class="logo big">It's a match!</h2>
-      <p id="match-modal-text"></p>
-      <button class="primary" id="match-chat-btn">Send a message</button>
-      <button class="link" id="match-close-btn">Keep browsing</button>
     </div>
+
+    <!-- It's a match -->
+    <div id="match-modal" class="match-overlay hidden">
+      <div class="hearts" id="hearts" aria-hidden="true"></div>
+      <div class="match-content">
+        <div class="match-photos" id="match-photos"></div>
+        <h1 class="display">It's a match!</h1>
+        <p id="match-text"></p>
+        <button class="btn btn-primary btn-block" id="match-chat-btn">Send a message</button>
+        <button class="btn btn-ghost btn-block" id="match-close-btn">Keep browsing</button>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status"></div>
   </div>
 
   <input type="file" id="photo-input" accept="image/*" multiple hidden />
