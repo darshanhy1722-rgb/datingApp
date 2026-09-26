@@ -60,6 +60,7 @@ async function signup(overrides = {}) {
     birthdate: birthdateForAge(28),
     gender: 'woman',
     interested_in: 'everyone',
+    accept_terms: true,
     ...overrides,
   };
   const res = await call('POST', '/api/signup', { body });
@@ -113,7 +114,7 @@ test('signup requires 18+ and a real date of birth', async () => {
 test('login, duplicate email, logout', async () => {
   const { token } = await signup({ email: 'Alice@Example.com' });
   const dup = await call('POST', '/api/signup', {
-    body: { email: 'alice@example.com', password: 'password123', name: 'A', birthdate: '1990-01-01', gender: 'woman', interested_in: 'man' },
+    body: { email: 'alice@example.com', password: 'password123', name: 'A', birthdate: '1990-01-01', gender: 'woman', interested_in: 'man', accept_terms: true },
   });
   assert.equal(dup.status, 409);
   assert.equal((await call('POST', '/api/login', { body: { email: 'alice@example.com', password: 'wrong-pass' } })).status, 401);
@@ -365,7 +366,8 @@ test('upgrading a v2 database keeps existing data', () => {
   const db = openDb(file);
   assert.equal(db.prepare('SELECT email FROM users').get().email, 'kept@example.com');
   assert.equal(db.prepare('SELECT liked_item FROM swipes').get().liked_item, null);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(db.prepare('SELECT terms_version FROM users').get().terms_version, null);
   assert.equal(db.prepare('SELECT super FROM swipes').get().super, 0);
   db.close();
 });
@@ -473,4 +475,33 @@ test('recommendations explain what you have in common', async () => {
   assert.ok(pick.common_ground.includes("You're both from Guwahati"));
   assert.equal(pick.hometown, 'Guwahati');
   assert.equal(res.data.recommended[0].id, twin.user.id, 'highest score first');
+});
+
+test('signup requires accepting the Terms & Privacy Policy', async () => {
+  const body = { email: 'noterms@example.com', password: 'password123', name: 'N', birthdate: birthdateForAge(30), gender: 'man', interested_in: 'woman' };
+  assert.equal((await call('POST', '/api/signup', { body })).status, 400);
+  assert.equal((await call('POST', '/api/signup', { body: { ...body, accept_terms: 'yes' } })).status, 400, 'must be exactly true');
+  const ok = await call('POST', '/api/signup', { body: { ...body, accept_terms: true } });
+  assert.equal(ok.status, 201);
+  assert.equal(ok.data.user.terms_accepted, true);
+  const row = server.app.locals.db.prepare('SELECT terms_version, terms_accepted_at FROM users WHERE id = ?').get(ok.data.user.id);
+  const { data: opts } = await call('GET', '/api/options');
+  assert.equal(row.terms_version, opts.TERMS_VERSION);
+  assert.ok(row.terms_accepted_at);
+});
+
+test('people who have not accepted the current Terms must accept before using the app', async () => {
+  const a = await completeUser({ gender: 'man', interested_in: 'woman' });
+  // Simulate an account from before Terms existed (or an older version).
+  server.app.locals.db.prepare('UPDATE users SET terms_version = NULL WHERE id = ?').run(a.user.id);
+  assert.equal((await call('GET', '/api/me', { token: a.token })).data.user.terms_accepted, false);
+  assert.equal((await call('GET', '/api/discover', { token: a.token })).status, 403);
+  assert.equal((await call('POST', '/api/swipes', { token: a.token, body: { target_id: 1, liked: true } })).status, 403);
+
+  assert.equal((await call('POST', '/api/me/accept-terms', { token: a.token, body: { version: 'old' } })).status, 409);
+  const { data: opts } = await call('GET', '/api/options');
+  const accepted = await call('POST', '/api/me/accept-terms', { token: a.token, body: { version: opts.TERMS_VERSION } });
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.data.user.terms_accepted, true);
+  assert.equal((await call('GET', '/api/discover', { token: a.token })).status, 200);
 });

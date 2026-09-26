@@ -1,0 +1,22 @@
+/* Shared styles for the Terms and Privacy pages. Colours follow the app's theme. */
+@import url("styles.css");
+
+body { background: var(--bg); color: var(--ink); }
+.legal { max-width: 720px; margin: 0 auto; padding: 28px 22px 60px; line-height: 1.6; }
+.legal header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.legal .brand { font-size: 1.6rem; }
+.legal h1 { font-size: 2.2rem; font-weight: 800; letter-spacing: -0.025em; margin: 18px 0 4px; }
+.legal h2 { font-size: 1.25rem; font-weight: 800; margin: 32px 0 8px; }
+.legal p, .legal li { color: var(--ink-2); }
+.legal ul { padding-left: 22px; }
+.legal li { margin: 4px 0; }
+.legal a { color: var(--ink); font-weight: 600; }
+.legal .meta { color: var(--muted); margin: 0; }
+.legal .draft { margin: 18px 0; padding: 14px 16px; border-radius: 14px; background: var(--accent); color: #1d1d1b; font-weight: 600; }
+.legal .toc { padding: 16px 20px; border-radius: 16px; background: var(--chip); }
+.legal .toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 28px; }
+.legal .box { padding: 16px 18px; border-radius: 16px; border: 1.5px solid var(--line); }
+.legal table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.legal th, .legal td { text-align: left; vertical-align: top; padding: 10px 8px; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.legal th { color: var(--ink); }
+@media (max-width: 560px) { .legal .toc ol { columns: 1; } }

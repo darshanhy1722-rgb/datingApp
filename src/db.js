@@ -1,6 +1,6 @@
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
   bio           TEXT    NOT NULL DEFAULT '',
   city          TEXT    NOT NULL DEFAULT '',
   hometown      TEXT    NOT NULL DEFAULT '',
+  terms_version TEXT,                         -- which Terms/Privacy version they accepted
+  terms_accepted_at TEXT,
   latitude      REAL,                         -- rounded to ~100 m, never shown to others
   longitude     REAL,
   height_cm     INTEGER,
@@ -107,6 +109,8 @@ const MIGRATIONS = {
   2: 'ALTER TABLE swipes ADD COLUMN liked_item TEXT;',
   3: `ALTER TABLE users ADD COLUMN hometown TEXT NOT NULL DEFAULT '';
       ALTER TABLE swipes ADD COLUMN super INTEGER NOT NULL DEFAULT 0;`,
+  4: `ALTER TABLE users ADD COLUMN terms_version TEXT;
+      ALTER TABLE users ADD COLUMN terms_accepted_at TEXT;`,
 };
 
 function openDb(path = ':memory:') {

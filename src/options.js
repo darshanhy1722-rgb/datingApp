@@ -65,6 +65,9 @@ const REPORT_REASONS = {
   other: 'Something else',
 };
 
+// Bump this whenever terms.html or privacy.html change; everyone is asked to accept again.
+const TERMS_VERSION = '2026-09-26';
+
 const LIMITS = {
   minPhotos: 2,
   maxPhotos: 6,
@@ -77,4 +80,4 @@ const LIMITS = {
   matchExpiryHours: 24, // a new match expires if nobody sends a message in time
 };
 
-module.exports = { GENDERS, INTERESTS, LOOKING_FOR, EDUCATION, HABITS, KIDS, PROMPTS, DETAIL_ENUMS, REPORT_REASONS, LIMITS };
+module.exports = { GENDERS, INTERESTS, LOOKING_FOR, EDUCATION, HABITS, KIDS, PROMPTS, DETAIL_ENUMS, REPORT_REASONS, TERMS_VERSION, LIMITS };

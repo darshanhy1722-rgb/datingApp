@@ -116,9 +116,11 @@ function toast(message) {
 
 // Closing hides the sheet after its slide-out; opening a new one cancels that.
 let sheetTimer;
-function openSheet(content) {
+let sheetLocked = false;
+function openSheet(content, { locked = false } = {}) {
   const sheet = $('#sheet');
   clearTimeout(sheetTimer);
+  sheetLocked = locked;
   $('#sheet-body').replaceChildren(content);
   sheet.classList.remove('hidden');
   requestAnimationFrame(() => sheet.classList.add('open'));
@@ -131,7 +133,7 @@ function closeSheet() {
 }
 
 $('#sheet').addEventListener('click', (e) => {
-  if (e.target.id === 'sheet') closeSheet();
+  if (e.target.id === 'sheet' && !sheetLocked) closeSheet();
 });
 
 function confirmSheet({ title, text, action, danger = false }) {
@@ -354,7 +356,8 @@ $$('[data-go]').forEach((b) =>
 );
 $$('[data-open=filters]').forEach((b) => b.addEventListener('click', () => openFilters()));
 
-function goHome() {
+async function goHome() {
+  if (!state.me.terms_accepted) await termsGate();
   if (state.me.profile_complete) show(HOME);
   else startSetup('onboard');
 }
@@ -414,6 +417,54 @@ async function logout() {
   if (!(await confirmSheet({ title: 'Log out?', action: 'Log out', danger: true }))) return;
   try { await api('POST', '/api/logout'); } catch { /* already logged out */ }
   logoutLocal();
+}
+
+// ---- Terms & Conditions ----
+
+// "I agree" tick box. Links open the full pages in a new tab so nothing typed is lost.
+function termsCheckbox(id) {
+  const link = (href, text) => el('a', { href, target: '_blank', rel: 'noopener' }, text);
+  return el('label', { class: 'consent' },
+    el('input', {
+      type: 'checkbox',
+      id,
+      // Ticking the box clears a "please tick the box" message.
+      onchange: () => $$('#setup-error, #sheet .error').forEach((e) => (e.textContent = '')),
+    }),
+    el('span', { class: 'consent-box' }, icon('check')),
+    el('span', {}, "I'm 18 or older and I agree to the ", link('terms.html', 'Terms & Conditions'), ' and ', link('privacy.html', 'Privacy Policy'), '.'));
+}
+
+// Accounts that haven't accepted the current Terms (older accounts, or after the Terms change)
+// must accept before continuing. The sheet can't be dismissed, only accepted or logged out of.
+function termsGate() {
+  return new Promise((resolve) => {
+    const error = el('p', { class: 'error' });
+    const accept = el('button', { class: 'btn btn-primary btn-block' }, 'Accept and continue');
+    accept.addEventListener('click', async () => {
+      if (!$('#gate-terms').checked) {
+        error.textContent = 'Please tick the box to continue';
+        return;
+      }
+      accept.disabled = true;
+      try {
+        ({ user: state.me } = await api('POST', '/api/me/accept-terms', { version: state.options.TERMS_VERSION }));
+        closeSheet();
+        resolve();
+      } catch (err) {
+        error.textContent = err.message;
+        accept.disabled = false;
+      }
+    });
+    openSheet(el('div', { class: 'stack' },
+      el('div', { class: 'setup-icon' }, icon('shield')),
+      el('h3', { class: 'display sheet-title' }, 'Please review our Terms'),
+      el('p', { class: 'muted' }, 'To keep using Spark, please read and accept our Terms & Conditions and Privacy Policy. They explain our community rules, how we keep you safe, and how we handle your data.'),
+      termsCheckbox('gate-terms'),
+      error,
+      accept,
+      el('button', { class: 'btn btn-ghost btn-block', onclick: () => { closeSheet(); logoutLocal(); } }, 'Log out')), { locked: true });
+  });
 }
 
 // ---- Sign-up + profile wizard ----
@@ -585,12 +636,14 @@ const STEP_DEFS = {
     render: () =>
       el('div', { class: 'stack' },
         el('label', { class: 'field' }, 'Email', el('input', { id: 'f-email', type: 'email', autocomplete: 'email', value: state.signup.email || '' })),
-        el('label', { class: 'field' }, 'Password', el('input', { id: 'f-password', type: 'password', autocomplete: 'new-password', placeholder: 'At least 8 characters' }))),
+        el('label', { class: 'field' }, 'Password', el('input', { id: 'f-password', type: 'password', autocomplete: 'new-password', placeholder: 'At least 8 characters' })),
+        termsCheckbox('f-terms')),
     async save() {
       const email = $('#f-email').value.trim();
       const password = $('#f-password').value;
       state.signup.email = email;
-      const { token, user } = await api('POST', '/api/signup', { ...state.signup, email, password });
+      if (!$('#f-terms').checked) throw new Error('Please tick the box to accept the Terms & Conditions and Privacy Policy');
+      const { token, user } = await api('POST', '/api/signup', { ...state.signup, email, password, accept_terms: true });
       signedIn(token, user);
     },
   },
@@ -1728,6 +1781,8 @@ $('#settings-btn').addEventListener('click', () => {
     action('filter', 'Dating filters', filtersSummary(), openFilters),
     action('user', 'Edit profile', null, () => show('edit')),
     action('palette', 'App colour', `${ACCENTS[storedSetting('accent', 'yellow', ACCENTS)][0]} · ${MODES[storedSetting('mode', 'light', MODES)]}`, openThemeSheet),
+    action('info', 'Terms & Conditions', null, () => window.open('terms.html', '_blank', 'noopener')),
+    action('shield', 'Privacy Policy', null, () => window.open('privacy.html', '_blank', 'noopener')),
     action('logout', 'Log out', state.me.email, logout, 'danger')));
 });
 $('#safety-btn').addEventListener('click', () => {

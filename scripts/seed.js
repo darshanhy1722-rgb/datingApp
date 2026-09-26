@@ -5,6 +5,7 @@ const path = require('node:path');
 const { openDb, transaction } = require('../src/db');
 const { hashPassword } = require('../src/auth');
 const { DEFAULT_FILTERS } = require('../src/profile');
+const { TERMS_VERSION } = require('../src/options');
 
 const dbPath = process.env.DB_PATH || path.join(__dirname, '..', 'dating.db');
 const db = openDb(dbPath);
@@ -81,8 +82,9 @@ const people = [
 
 const insertUser = db.prepare(
   `INSERT INTO users (email, password_hash, name, birthdate, gender, interested_in, city, latitude, longitude,
-                      height_cm, job_title, education, looking_for, drinking, smoking, kids, bio, hometown, filters)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      height_cm, job_title, education, looking_for, drinking, smoking, kids, bio, hometown, filters,
+                      terms_version, terms_accepted_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
 );
 const insertSwipe = db.prepare('INSERT OR IGNORE INTO swipes (swiper_id, target_id, liked) VALUES (?, ?, 1)');
 const insertMatch = db.prepare("INSERT OR IGNORE INTO matches (user_a, user_b, created_at) VALUES (?, ?, datetime('now', ?))");
@@ -120,7 +122,7 @@ transaction(db, () => {
     const { lastInsertRowid: id } = insertUser.run(
       email, hash, name, birthdate(age), gender, interestedIn, city, lat, lon,
       d.height_cm ?? null, d.job_title ?? '', d.education ?? null, d.looking_for ?? null,
-      d.drinking ?? null, d.smoking ?? null, d.kids ?? null, d.bio ?? '', d.hometown ?? '', JSON.stringify(DEFAULT_FILTERS),
+      d.drinking ?? null, d.smoking ?? null, d.kids ?? null, d.bio ?? '', d.hometown ?? '', JSON.stringify(DEFAULT_FILTERS), TERMS_VERSION,
     );
     photos.forEach((url) => insertPhoto.run(id, url));
     prompts.forEach(([prompt, answer], i) => insertPrompt.run(id, i, prompt, answer));
