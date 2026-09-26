@@ -11,63 +11,110 @@
     <span class="logo">Spark</span>
     <nav>
       <button data-view="discover" class="nav-btn">Discover</button>
+      <button data-view="likes" class="nav-btn">Likes <span id="likes-badge" class="badge hidden"></span></button>
       <button data-view="matches" class="nav-btn">Matches</button>
       <button data-view="profile" class="nav-btn">Profile</button>
     </nav>
   </header>
 
   <main id="app">
-    <!-- Auth -->
+    <!-- Log in / create account -->
     <section id="view-auth" class="view hidden">
       <div class="card narrow">
         <h1 class="logo big">Spark</h1>
         <p class="muted">Meet people who like you back.</p>
         <div class="tabs">
           <button class="tab active" data-auth="login">Log in</button>
-          <button class="tab" data-auth="signup">Sign up</button>
+          <button class="tab" data-auth="signup">Create account</button>
         </div>
+
         <form id="login-form" class="form">
           <label>Email <input name="email" type="email" required autocomplete="email" /></label>
           <label>Password <input name="password" type="password" required autocomplete="current-password" /></label>
           <button class="primary" type="submit">Log in</button>
         </form>
+
         <form id="signup-form" class="form hidden">
+          <label>First name <input name="name" required maxlength="50" autocomplete="given-name" /></label>
+          <label>Date of birth <input name="birthdate" type="date" required /></label>
+          <p class="hint" id="dob-hint">You must be 18 or older. Your age is shown on your profile, not your birthday.</p>
+          <fieldset>
+            <legend>I am a</legend>
+            <div class="pills" data-radio="gender"></div>
+          </fieldset>
+          <fieldset>
+            <legend>Show me</legend>
+            <div class="pills" data-radio="interested_in"></div>
+          </fieldset>
           <label>Email <input name="email" type="email" required autocomplete="email" /></label>
-          <label>Password <input name="password" type="password" minlength="8" required autocomplete="new-password" /></label>
-          <label>First name <input name="name" required maxlength="50" /></label>
-          <label>Age <input name="age" type="number" min="18" max="120" required /></label>
-          <label>I am a
-            <select name="gender" required>
-              <option value="woman">Woman</option>
-              <option value="man">Man</option>
-              <option value="nonbinary">Non-binary</option>
-            </select>
-          </label>
-          <label>Show me
-            <select name="interested_in" required>
-              <option value="everyone">Everyone</option>
-              <option value="woman">Women</option>
-              <option value="man">Men</option>
-            </select>
-          </label>
-          <button class="primary" type="submit">Create account</button>
+          <label>Password <input name="password" type="password" minlength="8" required autocomplete="new-password" placeholder="At least 8 characters" /></label>
+          <button class="primary" type="submit">Continue</button>
         </form>
         <p class="error" id="auth-error"></p>
       </div>
     </section>
 
+    <!-- Profile setup wizard (also used to edit one section at a time) -->
+    <section id="view-setup" class="view hidden">
+      <div class="card narrow setup">
+        <div class="progress" id="setup-progress"><div></div></div>
+        <p class="muted step-label" id="setup-step-label"></p>
+        <h2 id="setup-title"></h2>
+        <p class="muted" id="setup-subtitle"></p>
+        <div id="setup-body"></div>
+        <p class="error" id="setup-error"></p>
+        <div class="setup-actions">
+          <button class="link" id="setup-back">Back</button>
+          <button class="primary" id="setup-next">Next</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Discover -->
     <section id="view-discover" class="view hidden">
-      <div id="deck" class="deck"></div>
-      <div class="swipe-actions" id="swipe-actions">
+      <div class="view-header">
+        <h2>Discover</h2>
+        <button class="chip-btn" id="open-filters">⚙︎ Filters</button>
+      </div>
+      <div id="deck"></div>
+      <div class="action-bar hidden" id="discover-actions">
         <button class="round pass" id="pass-btn" title="Pass (←)">✕</button>
         <button class="round like" id="like-btn" title="Like (→)">♥</button>
       </div>
     </section>
 
+    <!-- Filters -->
+    <section id="view-filters" class="view hidden">
+      <div class="view-header">
+        <button class="link" id="filters-back">← Back</button>
+        <h2>Filters</h2>
+        <button class="link" id="filters-reset">Reset</button>
+      </div>
+      <form id="filters-form" class="card form"></form>
+    </section>
+
+    <!-- Likes you -->
+    <section id="view-likes" class="view hidden">
+      <h2>Likes you</h2>
+      <p class="muted">Like them back to match instantly.</p>
+      <div id="likes-grid" class="likes-grid"></div>
+    </section>
+
+    <!-- Someone's full profile (from Likes, or a match) -->
+    <section id="view-person" class="view hidden">
+      <div class="view-header">
+        <button class="link" id="person-back">← Back</button>
+      </div>
+      <div id="person-body"></div>
+      <div class="action-bar hidden" id="person-actions">
+        <button class="round pass" id="person-pass">✕</button>
+        <button class="round like" id="person-like">♥</button>
+      </div>
+    </section>
+
     <!-- Matches -->
     <section id="view-matches" class="view hidden">
-      <h2>Your matches</h2>
+      <h2>Matches</h2>
       <ul id="match-list" class="match-list"></ul>
     </section>
 
@@ -75,7 +122,7 @@
     <section id="view-chat" class="view hidden">
       <div class="chat-header">
         <button class="link" id="chat-back">← Back</button>
-        <div id="chat-with" class="chat-with"></div>
+        <button class="chat-with link" id="chat-with" title="View profile"></button>
         <button class="link danger" id="unmatch-btn">Unmatch</button>
       </div>
       <div id="messages" class="messages"></div>
@@ -85,51 +132,45 @@
       </form>
     </section>
 
-    <!-- Profile -->
+    <!-- My profile -->
     <section id="view-profile" class="view hidden">
-      <div class="card narrow">
-        <h2>Your profile</h2>
-        <form id="profile-form" class="form">
-          <label>First name <input name="name" required maxlength="50" /></label>
-          <label>Age <input name="age" type="number" min="18" max="120" required /></label>
-          <label>City <input name="city" maxlength="80" /></label>
-          <label>Photo URL <input name="photo_url" type="url" maxlength="500" placeholder="https://…" /></label>
-          <label>About me <textarea name="bio" rows="4" maxlength="500"></textarea></label>
-          <label>I am a
-            <select name="gender">
-              <option value="woman">Woman</option>
-              <option value="man">Man</option>
-              <option value="nonbinary">Non-binary</option>
-            </select>
-          </label>
-          <label>Show me
-            <select name="interested_in">
-              <option value="everyone">Everyone</option>
-              <option value="woman">Women</option>
-              <option value="man">Men</option>
-            </select>
-          </label>
-          <div class="row">
-            <label>Min age <input name="min_age" type="number" min="18" max="120" /></label>
-            <label>Max age <input name="max_age" type="number" min="18" max="120" /></label>
-          </div>
-          <button class="primary" type="submit">Save</button>
-          <p class="notice" id="profile-notice"></p>
-        </form>
+      <div class="view-header">
+        <h2>My profile</h2>
         <button class="link danger" id="logout-btn">Log out</button>
       </div>
+      <div class="edit-buttons">
+        <button class="chip-btn" data-edit="photos">Edit photos</button>
+        <button class="chip-btn" data-edit="prompts">Edit prompts</button>
+        <button class="chip-btn" data-edit="location">Edit location</button>
+        <button class="chip-btn" data-edit="details">Edit details</button>
+      </div>
+      <p class="muted small">This is how other people see you:</p>
+      <div id="my-profile"></div>
     </section>
   </main>
 
+  <!-- Like with a comment -->
+  <div id="like-modal" class="modal hidden">
+    <form class="card narrow" id="like-form">
+      <h3 id="like-title"></h3>
+      <textarea name="comment" rows="3" maxlength="300" placeholder="Add a comment (optional) — it becomes your first message if you match"></textarea>
+      <button class="primary" type="submit">Send like</button>
+      <button class="link" type="button" id="like-cancel">Cancel</button>
+    </form>
+  </div>
+
+  <!-- It's a match -->
   <div id="match-modal" class="modal hidden">
     <div class="card narrow center">
+      <div class="match-avatars" id="match-avatars"></div>
       <h2 class="logo big">It's a match!</h2>
       <p id="match-modal-text"></p>
       <button class="primary" id="match-chat-btn">Send a message</button>
-      <button class="link" id="match-close-btn">Keep swiping</button>
+      <button class="link" id="match-close-btn">Keep browsing</button>
     </div>
   </div>
 
+  <input type="file" id="photo-input" accept="image/*" multiple hidden />
   <script src="app.js"></script>
 </body>
 </html>

@@ -1,135 +1,96 @@
+const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const express = require('express');
-const { openDb } = require('./db');
+const { openDb, transaction } = require('./db');
 const { hashPassword, verifyPassword, newToken } = require('./auth');
+const options = require('./options');
+const {
+  HttpError,
+  ageFrom,
+  validateBirthdate,
+  text,
+  int,
+  validateDetails,
+  normalizeFilters,
+  parseFilters,
+  passesFilters,
+  DEFAULT_FILTERS,
+} = require('./profile');
 
-const GENDERS = ['man', 'woman', 'nonbinary'];
-const INTERESTS = ['man', 'woman', 'everyone'];
+const { PROMPTS, LIMITS } = options;
 const MAX_MESSAGE_LENGTH = 2000;
+const MAX_COMMENT_LENGTH = 300;
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
+const DISCOVER_PAGE_SIZE = 20;
 
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
+// Identify uploads by their leading bytes rather than trusting the Content-Type header.
+function imageExtension(buf) {
+  if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'webp';
+  return null;
 }
 
-function publicProfile(u) {
-  return {
-    id: u.id,
-    name: u.name,
-    age: u.age,
-    gender: u.gender,
-    bio: u.bio,
-    city: u.city,
-    photo_url: u.photo_url,
-  };
-}
-
-function ownProfile(u) {
-  return {
-    ...publicProfile(u),
-    email: u.email,
-    interested_in: u.interested_in,
-    min_age: u.min_age,
-    max_age: u.max_age,
-  };
-}
-
-function toInt(value, field) {
-  const n = Number(value);
-  if (!Number.isInteger(n)) throw new HttpError(400, `${field} must be a whole number`);
-  return n;
-}
-
-function trimmed(value, field, maxLen) {
-  if (typeof value !== 'string') throw new HttpError(400, `${field} must be text`);
-  const s = value.trim();
-  if (s.length > maxLen) throw new HttpError(400, `${field} must be at most ${maxLen} characters`);
-  return s;
-}
-
-// Validates the editable profile fields. With `partial`, missing fields are skipped.
-function validateProfile(body, { partial }) {
-  const out = {};
-  const has = (k) => body[k] !== undefined;
-  const need = (k) => {
-    if (!partial && !has(k)) throw new HttpError(400, `${k} is required`);
-    return has(k);
-  };
-
-  if (need('name')) {
-    out.name = trimmed(body.name, 'name', 50);
-    if (!out.name) throw new HttpError(400, 'name is required');
-  }
-  if (need('age')) {
-    out.age = toInt(body.age, 'age');
-    if (out.age < 18 || out.age > 120) throw new HttpError(400, 'You must be 18 or older');
-  }
-  if (need('gender')) {
-    if (!GENDERS.includes(body.gender)) throw new HttpError(400, `gender must be one of ${GENDERS.join(', ')}`);
-    out.gender = body.gender;
-  }
-  if (need('interested_in')) {
-    if (!INTERESTS.includes(body.interested_in)) {
-      throw new HttpError(400, `interested_in must be one of ${INTERESTS.join(', ')}`);
-    }
-    out.interested_in = body.interested_in;
-  }
-  if (has('min_age')) out.min_age = toInt(body.min_age, 'min_age');
-  if (has('max_age')) out.max_age = toInt(body.max_age, 'max_age');
-  if (has('bio')) out.bio = trimmed(body.bio, 'bio', 500);
-  if (has('city')) out.city = trimmed(body.city, 'city', 80);
-  if (has('photo_url')) {
-    out.photo_url = trimmed(body.photo_url, 'photo_url', 500);
-    if (out.photo_url && !/^https?:\/\//i.test(out.photo_url)) {
-      throw new HttpError(400, 'photo_url must start with http:// or https://');
-    }
-  }
-  return out;
-}
-
-function checkAgeRange(minAge, maxAge) {
-  if (minAge < 18 || maxAge > 120 || minAge > maxAge) {
-    throw new HttpError(400, 'Age range must be between 18 and 120, with min_age <= max_age');
-  }
-}
-
-function createApp({ dbPath = ':memory:' } = {}) {
+function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..', 'uploads') } = {}) {
   const db = openDb(dbPath);
+  fs.mkdirSync(uploadDir, { recursive: true });
+
   const app = express();
   app.locals.db = db;
 
   app.use(express.json({ limit: '100kb' }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use('/uploads', express.static(uploadDir, { fallthrough: false, maxAge: '7d' }));
 
   const q = {
     userById: db.prepare('SELECT * FROM users WHERE id = ?'),
     userByEmail: db.prepare('SELECT * FROM users WHERE email = ?'),
-    userBySession: db.prepare(
-      'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?',
-    ),
+    userBySession: db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?'),
     insertSession: db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)'),
     deleteSession: db.prepare('DELETE FROM sessions WHERE token = ?'),
+
+    photos: db.prepare('SELECT id, url FROM photos WHERE user_id = ? ORDER BY id'),
+    photoCount: db.prepare('SELECT COUNT(*) AS n FROM photos WHERE user_id = ?'),
+    insertPhoto: db.prepare('INSERT INTO photos (user_id, url) VALUES (?, ?) RETURNING id, url'),
+    photoById: db.prepare('SELECT * FROM photos WHERE id = ? AND user_id = ?'),
+    deletePhoto: db.prepare('DELETE FROM photos WHERE id = ?'),
+
+    prompts: db.prepare('SELECT prompt, answer FROM prompts WHERE user_id = ? ORDER BY position'),
+    deletePrompts: db.prepare('DELETE FROM prompts WHERE user_id = ?'),
+    insertPrompt: db.prepare('INSERT INTO prompts (user_id, position, prompt, answer) VALUES (?, ?, ?, ?)'),
+
+    updateFilters: db.prepare('UPDATE users SET filters = ? WHERE id = ?'),
+
     upsertSwipe: db.prepare(
-      `INSERT INTO swipes (swiper_id, target_id, liked) VALUES (?, ?, ?)
-       ON CONFLICT (swiper_id, target_id) DO UPDATE SET liked = excluded.liked, created_at = datetime('now')`,
+      `INSERT INTO swipes (swiper_id, target_id, liked, comment) VALUES (?, ?, ?, ?)
+       ON CONFLICT (swiper_id, target_id)
+       DO UPDATE SET liked = excluded.liked, comment = excluded.comment, created_at = datetime('now')`,
     ),
-    likedBy: db.prepare('SELECT 1 FROM swipes WHERE swiper_id = ? AND target_id = ? AND liked = 1'),
+    likeFrom: db.prepare('SELECT comment FROM swipes WHERE swiper_id = ? AND target_id = ? AND liked = 1'),
     insertMatch: db.prepare('INSERT OR IGNORE INTO matches (user_a, user_b) VALUES (?, ?)'),
     matchByPair: db.prepare('SELECT * FROM matches WHERE user_a = ? AND user_b = ?'),
     matchForUser: db.prepare('SELECT * FROM matches WHERE id = ? AND (user_a = ? OR user_b = ?)'),
     deleteMatch: db.prepare('DELETE FROM matches WHERE id = ?'),
-    discover: db.prepare(
+
+    // Candidates whose gender fits my interest and whose interest fits my gender,
+    // with a complete profile, that I haven't swiped on yet. Other filters run in JS.
+    candidates: db.prepare(
       `SELECT u.* FROM users u
        WHERE u.id != :me
          AND (:interested_in = 'everyone' OR u.gender = :interested_in)
          AND (u.interested_in = 'everyone' OR u.interested_in = :gender)
-         AND u.age BETWEEN :min_age AND :max_age
-         AND :age BETWEEN u.min_age AND u.max_age
-         AND NOT EXISTS (SELECT 1 FROM swipes s WHERE s.swiper_id = :me AND s.target_id = u.id)
-       ORDER BY RANDOM()
-       LIMIT :limit`,
+         AND u.city != ''
+         AND (SELECT COUNT(*) FROM photos p WHERE p.user_id = u.id) >= :min_photos
+         AND (SELECT COUNT(*) FROM prompts p WHERE p.user_id = u.id) >= :min_prompts
+         AND NOT EXISTS (SELECT 1 FROM swipes s WHERE s.swiper_id = :me AND s.target_id = u.id)`,
+    ),
+    likesMe: db.prepare(
+      `SELECT u.*, s.comment AS like_comment, s.created_at AS liked_at
+       FROM swipes s JOIN users u ON u.id = s.swiper_id
+       WHERE s.target_id = :me AND s.liked = 1
+         AND NOT EXISTS (SELECT 1 FROM swipes mine WHERE mine.swiper_id = :me AND mine.target_id = u.id)
+       ORDER BY s.created_at DESC, s.rowid DESC`,
     ),
     matches: db.prepare(
       `SELECT m.id AS match_id, m.created_at AS matched_at, u.*,
@@ -138,7 +99,7 @@ function createApp({ dbPath = ':memory:' } = {}) {
        FROM matches m
        JOIN users u ON u.id = CASE WHEN m.user_a = :me THEN m.user_b ELSE m.user_a END
        WHERE m.user_a = :me OR m.user_b = :me
-       ORDER BY COALESCE(last_message_at, m.created_at) DESC`,
+       ORDER BY COALESCE(last_message_at, m.created_at) DESC, m.id DESC`,
     ),
     messagesAfter: db.prepare(
       'SELECT id, sender_id, body, created_at FROM messages WHERE match_id = ? AND id > ? ORDER BY id LIMIT 200',
@@ -148,11 +109,54 @@ function createApp({ dbPath = ':memory:' } = {}) {
     ),
   };
 
-  function startSession(userId) {
-    const token = newToken();
-    q.insertSession.run(token, userId);
-    return token;
+  // ---- Profile shapes ----
+
+  function missingSteps(user) {
+    const missing = [];
+    if (q.photoCount.get(user.id).n < LIMITS.minPhotos) missing.push('photos');
+    if (q.prompts.all(user.id).length < LIMITS.minPrompts) missing.push('prompts');
+    if (!user.city) missing.push('location');
+    return missing;
   }
+
+  // What other people can see. Exact coordinates are never exposed, only a distance.
+  function publicProfile(u, distance = null) {
+    return {
+      id: u.id,
+      name: u.name,
+      age: ageFrom(u.birthdate),
+      gender: u.gender,
+      city: u.city,
+      distance_km: distance === null ? null : Math.max(1, Math.round(distance)),
+      bio: u.bio,
+      height_cm: u.height_cm,
+      job_title: u.job_title,
+      education: u.education,
+      looking_for: u.looking_for,
+      drinking: u.drinking,
+      smoking: u.smoking,
+      kids: u.kids,
+      photos: q.photos.all(u.id),
+      prompts: q.prompts.all(u.id),
+    };
+  }
+
+  function ownProfile(u) {
+    const missing = missingSteps(u);
+    return {
+      ...publicProfile(u),
+      email: u.email,
+      birthdate: u.birthdate,
+      interested_in: u.interested_in,
+      latitude: u.latitude,
+      longitude: u.longitude,
+      filters: parseFilters(u.filters),
+      missing,
+      profile_complete: missing.length === 0,
+    };
+  }
+
+  // ---- Middleware ----
 
   function requireAuth(req, _res, next) {
     const header = req.get('authorization') || '';
@@ -164,48 +168,50 @@ function createApp({ dbPath = ':memory:' } = {}) {
     next();
   }
 
+  function requireComplete(req, _res, next) {
+    if (missingSteps(req.user).length) return next(new HttpError(403, 'Finish setting up your profile first'));
+    next();
+  }
+
   function loadMatch(req) {
-    const id = toInt(req.params.id, 'match id');
+    const id = int(req.params.id, 'match id', 1, Number.MAX_SAFE_INTEGER);
     const match = q.matchForUser.get(id, req.user.id, req.user.id);
     if (!match) throw new HttpError(404, 'Match not found');
     return match;
   }
 
+  // ---- Public ----
+
+  app.get('/api/options', (_req, res) => {
+    res.json({ ...options, DEFAULT_FILTERS });
+  });
+
   // ---- Auth ----
 
   app.post('/api/signup', (req, res) => {
     const body = req.body || {};
-    const email = trimmed(body.email ?? '', 'email', 254).toLowerCase();
+    const email = text(body.email ?? '', 'email', 254).toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, 'A valid email is required');
     if (typeof body.password !== 'string' || body.password.length < 8) {
       throw new HttpError(400, 'Password must be at least 8 characters');
     }
-    const p = validateProfile(body, { partial: false });
-    const minAge = p.min_age ?? 18;
-    const maxAge = p.max_age ?? 99;
-    checkAgeRange(minAge, maxAge);
+    for (const field of ['name', 'gender', 'interested_in']) {
+      if (body[field] === undefined) throw new HttpError(400, `${field} is required`);
+    }
+    const birthdate = validateBirthdate(body.birthdate);
+    const d = validateDetails({ name: body.name, gender: body.gender, interested_in: body.interested_in });
     if (q.userByEmail.get(email)) throw new HttpError(409, 'An account with that email already exists');
 
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO users (email, password_hash, name, age, gender, interested_in, min_age, max_age, bio, city, photo_url)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (email, password_hash, name, birthdate, gender, interested_in, filters)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(
-        email,
-        hashPassword(body.password),
-        p.name,
-        p.age,
-        p.gender,
-        p.interested_in,
-        minAge,
-        maxAge,
-        p.bio ?? '',
-        p.city ?? '',
-        p.photo_url ?? '',
-      );
+      .run(email, hashPassword(body.password), d.name, birthdate, d.gender, d.interested_in, JSON.stringify(DEFAULT_FILTERS));
     const user = q.userById.get(lastInsertRowid);
-    res.status(201).json({ token: startSession(user.id), user: ownProfile(user) });
+    const token = newToken();
+    q.insertSession.run(token, user.id);
+    res.status(201).json({ token, user: ownProfile(user) });
   });
 
   app.post('/api/login', (req, res) => {
@@ -214,7 +220,9 @@ function createApp({ dbPath = ':memory:' } = {}) {
     if (!user || typeof password !== 'string' || !verifyPassword(password, user.password_hash)) {
       throw new HttpError(401, 'Incorrect email or password');
     }
-    res.json({ token: startSession(user.id), user: ownProfile(user) });
+    const token = newToken();
+    q.insertSession.run(token, user.id);
+    res.json({ token, user: ownProfile(user) });
   });
 
   app.post('/api/logout', requireAuth, (req, res) => {
@@ -222,15 +230,14 @@ function createApp({ dbPath = ':memory:' } = {}) {
     res.status(204).end();
   });
 
-  // ---- Profile ----
+  // ---- My profile ----
 
   app.get('/api/me', requireAuth, (req, res) => {
     res.json({ user: ownProfile(req.user) });
   });
 
   app.put('/api/me', requireAuth, (req, res) => {
-    const changes = validateProfile(req.body || {}, { partial: true });
-    checkAgeRange(changes.min_age ?? req.user.min_age, changes.max_age ?? req.user.max_age);
+    const changes = validateDetails(req.body || {});
     const fields = Object.keys(changes);
     if (fields.length) {
       const sets = fields.map((f) => `${f} = ?`).join(', ');
@@ -239,39 +246,128 @@ function createApp({ dbPath = ':memory:' } = {}) {
     res.json({ user: ownProfile(q.userById.get(req.user.id)) });
   });
 
-  // ---- Discovery & swiping ----
+  app.put('/api/me/filters', requireAuth, (req, res) => {
+    const filters = normalizeFilters(req.body || {});
+    q.updateFilters.run(JSON.stringify(filters), req.user.id);
+    res.json({ user: ownProfile(q.userById.get(req.user.id)) });
+  });
 
-  app.get('/api/discover', requireAuth, (req, res) => {
+  app.put('/api/me/prompts', requireAuth, (req, res) => {
+    const list = (req.body || {}).prompts;
+    if (!Array.isArray(list)) throw new HttpError(400, 'prompts must be a list');
+    if (list.length > LIMITS.maxPrompts) throw new HttpError(400, `You can answer up to ${LIMITS.maxPrompts} prompts`);
+    const clean = list.map((p, i) => {
+      if (!PROMPTS.includes(p?.prompt)) throw new HttpError(400, `Prompt ${i + 1} is not one of the available prompts`);
+      const answer = text(p.answer ?? '', 'answer', 250);
+      if (!answer) throw new HttpError(400, `Please answer "${p.prompt}"`);
+      return { prompt: p.prompt, answer };
+    });
+    if (new Set(clean.map((p) => p.prompt)).size !== clean.length) {
+      throw new HttpError(400, 'Each prompt can only be used once');
+    }
+    transaction(db, () => {
+      q.deletePrompts.run(req.user.id);
+      clean.forEach((p, i) => q.insertPrompt.run(req.user.id, i, p.prompt, p.answer));
+    });
+    res.json({ user: ownProfile(req.user) });
+  });
+
+  // The body is the raw image (the browser resizes it first). JPEG, PNG and WebP are accepted.
+  app.post(
+    '/api/me/photos',
+    requireAuth,
+    express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }),
+    (req, res) => {
+      if (q.photoCount.get(req.user.id).n >= LIMITS.maxPhotos) {
+        throw new HttpError(400, `You can have up to ${LIMITS.maxPhotos} photos`);
+      }
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const ext = imageExtension(buf);
+      if (!ext) throw new HttpError(400, 'Please upload a JPG, PNG or WebP image');
+      const filename = `${crypto.randomBytes(16).toString('hex')}.${ext}`;
+      fs.writeFileSync(path.join(uploadDir, filename), buf);
+      const photo = q.insertPhoto.get(req.user.id, `/uploads/${filename}`);
+      res.status(201).json({ photo, user: ownProfile(req.user) });
+    },
+  );
+
+  app.delete('/api/me/photos/:id', requireAuth, (req, res) => {
+    const photo = q.photoById.get(int(req.params.id, 'photo id', 1, Number.MAX_SAFE_INTEGER), req.user.id);
+    if (!photo) throw new HttpError(404, 'Photo not found');
+    q.deletePhoto.run(photo.id);
+    if (photo.url.startsWith('/uploads/')) {
+      fs.rm(path.join(uploadDir, path.basename(photo.url)), { force: true }, () => {});
+    }
+    res.json({ user: ownProfile(req.user) });
+  });
+
+  // ---- Discovery & likes ----
+
+  app.get('/api/discover', requireAuth, requireComplete, (req, res) => {
     const me = req.user;
-    const rows = q.discover.all({
+    const myFilters = parseFilters(me.filters);
+    const rows = q.candidates.all({
       me: me.id,
       gender: me.gender,
       interested_in: me.interested_in,
-      age: me.age,
-      min_age: me.min_age,
-      max_age: me.max_age,
-      limit: 20,
+      min_photos: LIMITS.minPhotos,
+      min_prompts: LIMITS.minPrompts,
     });
-    res.json({ profiles: rows.map(publicProfile) });
+    const results = [];
+    for (const u of rows) {
+      const pass = passesFilters(me, myFilters, u, parseFilters(u.filters));
+      if (pass) results.push({ u, distance: pass.distance });
+    }
+    // Closest first; people without a location go last.
+    results.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.u.id - b.u.id);
+    res.json({
+      profiles: results.slice(0, DISCOVER_PAGE_SIZE).map(({ u, distance }) => publicProfile(u, distance)),
+    });
   });
 
-  app.post('/api/swipes', requireAuth, (req, res) => {
+  function distanceBetween(a, b) {
+    const pass = passesFilters(a, { ...DEFAULT_FILTERS }, b, { ...DEFAULT_FILTERS });
+    return pass ? pass.distance : null;
+  }
+
+  // People who liked me and are waiting for my answer.
+  app.get('/api/likes', requireAuth, (req, res) => {
+    const rows = q.likesMe.all({ me: req.user.id });
+    res.json({
+      likes: rows.map((u) => ({
+        comment: u.like_comment,
+        liked_at: u.liked_at,
+        profile: publicProfile(u, distanceBetween(req.user, u)),
+      })),
+    });
+  });
+
+  app.post('/api/swipes', requireAuth, requireComplete, (req, res) => {
     const { target_id, liked } = req.body || {};
-    const targetId = toInt(target_id, 'target_id');
+    const targetId = int(target_id, 'target_id', 1, Number.MAX_SAFE_INTEGER);
     if (typeof liked !== 'boolean') throw new HttpError(400, 'liked must be true or false');
-    if (targetId === req.user.id) throw new HttpError(400, "You can't swipe on yourself");
+    const comment = liked ? text(req.body.comment ?? '', 'comment', MAX_COMMENT_LENGTH) : '';
+    if (targetId === req.user.id) throw new HttpError(400, "You can't like yourself");
     const target = q.userById.get(targetId);
     if (!target) throw new HttpError(404, 'User not found');
 
-    q.upsertSwipe.run(req.user.id, targetId, liked ? 1 : 0);
+    const result = transaction(db, () => {
+      q.upsertSwipe.run(req.user.id, targetId, liked ? 1 : 0, comment);
+      const theirLike = liked && q.likeFrom.get(targetId, req.user.id);
+      if (!theirLike) return { matched: false };
 
-    if (liked && q.likedBy.get(targetId, req.user.id)) {
       const [a, b] = req.user.id < targetId ? [req.user.id, targetId] : [targetId, req.user.id];
-      q.insertMatch.run(a, b);
+      const { changes } = q.insertMatch.run(a, b);
       const match = q.matchByPair.get(a, b);
-      return res.json({ matched: true, match_id: match.id, profile: publicProfile(target) });
-    }
-    res.json({ matched: false });
+      if (changes) {
+        // Comments sent with the likes open the conversation.
+        if (theirLike.comment) q.insertMessage.get(match.id, targetId, theirLike.comment);
+        if (comment) q.insertMessage.get(match.id, req.user.id, comment);
+      }
+      return { matched: true, match_id: match.id };
+    });
+    if (result.matched) result.profile = publicProfile(target, distanceBetween(req.user, target));
+    res.json(result);
   });
 
   // ---- Matches & chat ----
@@ -284,7 +380,7 @@ function createApp({ dbPath = ':memory:' } = {}) {
         matched_at: r.matched_at,
         last_message: r.last_message,
         last_message_at: r.last_message_at,
-        profile: publicProfile(r),
+        profile: publicProfile(r, distanceBetween(req.user, r)),
       })),
     });
   });
@@ -297,13 +393,13 @@ function createApp({ dbPath = ':memory:' } = {}) {
 
   app.get('/api/matches/:id/messages', requireAuth, (req, res) => {
     const match = loadMatch(req);
-    const after = req.query.after === undefined ? 0 : toInt(req.query.after, 'after');
+    const after = req.query.after === undefined ? 0 : int(req.query.after, 'after', 0, Number.MAX_SAFE_INTEGER);
     res.json({ messages: q.messagesAfter.all(match.id, after) });
   });
 
   app.post('/api/matches/:id/messages', requireAuth, (req, res) => {
     const match = loadMatch(req);
-    const body = trimmed((req.body || {}).body ?? '', 'body', MAX_MESSAGE_LENGTH);
+    const body = text((req.body || {}).body ?? '', 'body', MAX_MESSAGE_LENGTH);
     if (!body) throw new HttpError(400, 'Message cannot be empty');
     res.status(201).json({ message: q.insertMessage.get(match.id, req.user.id, body) });
   });
@@ -314,7 +410,8 @@ function createApp({ dbPath = ':memory:' } = {}) {
 
   app.use((err, _req, res, _next) => {
     if (err.type === 'entity.parse.failed') err = new HttpError(400, 'Invalid JSON body');
-    const status = err.status || 500;
+    if (err.type === 'entity.too.large') err = new HttpError(413, 'That file is too large');
+    const status = err.status || err.statusCode || 500;
     if (status >= 500) console.error(err);
     res.status(status).json({ error: status >= 500 ? 'Something went wrong' : err.message });
   });
