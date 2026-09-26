@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spark</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar hidden" id="topbar">
+    <span class="logo">Spark</span>
+    <nav>
+      <button data-view="discover" class="nav-btn">Discover</button>
+      <button data-view="matches" class="nav-btn">Matches</button>
+      <button data-view="profile" class="nav-btn">Profile</button>
+    </nav>
+  </header>
+
+  <main id="app">
+    <!-- Auth -->
+    <section id="view-auth" class="view hidden">
+      <div class="card narrow">
+        <h1 class="logo big">Spark</h1>
+        <p class="muted">Meet people who like you back.</p>
+        <div class="tabs">
+          <button class="tab active" data-auth="login">Log in</button>
+          <button class="tab" data-auth="signup">Sign up</button>
+        </div>
+        <form id="login-form" class="form">
+          <label>Email <input name="email" type="email" required autocomplete="email" /></label>
+          <label>Password <input name="password" type="password" required autocomplete="current-password" /></label>
+          <button class="primary" type="submit">Log in</button>
+        </form>
+        <form id="signup-form" class="form hidden">
+          <label>Email <input name="email" type="email" required autocomplete="email" /></label>
+          <label>Password <input name="password" type="password" minlength="8" required autocomplete="new-password" /></label>
+          <label>First name <input name="name" required maxlength="50" /></label>
+          <label>Age <input name="age" type="number" min="18" max="120" required /></label>
+          <label>I am a
+            <select name="gender" required>
+              <option value="woman">Woman</option>
+              <option value="man">Man</option>
+              <option value="nonbinary">Non-binary</option>
+            </select>
+          </label>
+          <label>Show me
+            <select name="interested_in" required>
+              <option value="everyone">Everyone</option>
+              <option value="woman">Women</option>
+              <option value="man">Men</option>
+            </select>
+          </label>
+          <button class="primary" type="submit">Create account</button>
+        </form>
+        <p class="error" id="auth-error"></p>
+      </div>
+    </section>
+
+    <!-- Discover -->
+    <section id="view-discover" class="view hidden">
+      <div id="deck" class="deck"></div>
+      <div class="swipe-actions" id="swipe-actions">
+        <button class="round pass" id="pass-btn" title="Pass (←)">✕</button>
+        <button class="round like" id="like-btn" title="Like (→)">♥</button>
+      </div>
+    </section>
+
+    <!-- Matches -->
+    <section id="view-matches" class="view hidden">
+      <h2>Your matches</h2>
+      <ul id="match-list" class="match-list"></ul>
+    </section>
+
+    <!-- Chat -->
+    <section id="view-chat" class="view hidden">
+      <div class="chat-header">
+        <button class="link" id="chat-back">← Back</button>
+        <div id="chat-with" class="chat-with"></div>
+        <button class="link danger" id="unmatch-btn">Unmatch</button>
+      </div>
+      <div id="messages" class="messages"></div>
+      <form id="message-form" class="message-form">
+        <input name="body" placeholder="Say something nice…" maxlength="2000" autocomplete="off" required />
+        <button class="primary" type="submit">Send</button>
+      </form>
+    </section>
+
+    <!-- Profile -->
+    <section id="view-profile" class="view hidden">
+      <div class="card narrow">
+        <h2>Your profile</h2>
+        <form id="profile-form" class="form">
+          <label>First name <input name="name" required maxlength="50" /></label>
+          <label>Age <input name="age" type="number" min="18" max="120" required /></label>
+          <label>City <input name="city" maxlength="80" /></label>
+          <label>Photo URL <input name="photo_url" type="url" maxlength="500" placeholder="https://…" /></label>
+          <label>About me <textarea name="bio" rows="4" maxlength="500"></textarea></label>
+          <label>I am a
+            <select name="gender">
+              <option value="woman">Woman</option>
+              <option value="man">Man</option>
+              <option value="nonbinary">Non-binary</option>
+            </select>
+          </label>
+          <label>Show me
+            <select name="interested_in">
+              <option value="everyone">Everyone</option>
+              <option value="woman">Women</option>
+              <option value="man">Men</option>
+            </select>
+          </label>
+          <div class="row">
+            <label>Min age <input name="min_age" type="number" min="18" max="120" /></label>
+            <label>Max age <input name="max_age" type="number" min="18" max="120" /></label>
+          </div>
+          <button class="primary" type="submit">Save</button>
+          <p class="notice" id="profile-notice"></p>
+        </form>
+        <button class="link danger" id="logout-btn">Log out</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="match-modal" class="modal hidden">
+    <div class="card narrow center">
+      <h2 class="logo big">It's a match!</h2>
+      <p id="match-modal-text"></p>
+      <button class="primary" id="match-chat-btn">Send a message</button>
+      <button class="link" id="match-close-btn">Keep swiping</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
