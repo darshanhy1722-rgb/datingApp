@@ -1,5 +1,6 @@
 // Fills the database with demo profiles. Log in as demo@example.com / password123.
-// Some demo profiles have already liked the demo user, so they show up under "Likes you".
+// Some demo profiles have already liked the demo user (one with a SuperSwipe), and the demo
+// user already has matches in each state: new with the 24h timer running, chatting, and expired.
 const path = require('node:path');
 const { openDb, transaction } = require('../src/db');
 const { hashPassword } = require('../src/auth');
@@ -20,11 +21,11 @@ function birthdate(age) {
 // [name, age, gender, interested_in, area, lat, lon, details, photos, prompts, likesDemo]
 const people = [
   ['Demo', 29, 'man', 'woman', 'Koramangala, Bengaluru', 12.935, 77.624,
-    { height_cm: 178, job_title: 'Software engineer', education: 'undergrad', looking_for: 'long_term', drinking: 'sometimes', smoking: 'no', kids: 'open' },
+    { height_cm: 178, job_title: 'Software engineer', education: 'undergrad', looking_for: 'long_term', drinking: 'sometimes', smoking: 'no', kids: 'open', hometown: 'Mysuru' },
     [pic('men', 32), pic('men', 33)],
     [['A perfect first date', 'Filter coffee, a walk in Cubbon Park, then dosa.'], ['I geek out on', 'Mechanical keyboards and old Bollywood songs.']]],
   ['Ananya', 27, 'woman', 'man', 'Indiranagar, Bengaluru', 12.978, 77.641,
-    { height_cm: 163, job_title: 'Product designer', education: 'postgrad', looking_for: 'long_term', drinking: 'sometimes', smoking: 'no', kids: 'want', bio: 'Chai over coffee, mountains over beaches.' },
+    { height_cm: 163, job_title: 'Product designer', education: 'postgrad', looking_for: 'long_term', drinking: 'sometimes', smoking: 'no', kids: 'want', bio: 'Chai over coffee, mountains over beaches.', hometown: 'Guwahati' },
     [pic('women', 44), pic('women', 45), pic('women', 46)],
     [['Typical Sunday', 'Farmers market, a long brunch, then a nap I refuse to apologise for.'], ['Green flags I look for', 'You text back and you tip well.'], ['Two truths and a lie', "I've met a tiger, I speak four languages, I hate mangoes."]],
     true],
@@ -59,6 +60,19 @@ const people = [
     { height_cm: 182, job_title: 'Musician', education: 'undergrad', looking_for: 'long_term', drinking: 'sometimes', smoking: 'no', kids: 'want' },
     [pic('men', 45), pic('men', 46)],
     [['I geek out on', 'Telescopes and Carnatic music.']]],
+  // Already matched with the demo user (see MATCHES below).
+  ['Tanvi', 26, 'woman', 'man', 'BTM Layout, Bengaluru', 12.916, 77.610,
+    { height_cm: 161, job_title: 'UX researcher', education: 'postgrad', looking_for: 'long_term', drinking: 'sometimes', smoking: 'no', hometown: 'Mysuru' },
+    [pic('women', 33), pic('women', 34)],
+    [['My simple pleasures', 'Rain, pakoras, and a window seat.']]],
+  ['Divya', 28, 'woman', 'man', 'Hebbal, Bengaluru', 13.035, 77.597,
+    { height_cm: 166, job_title: 'Chartered accountant', education: 'postgrad', looking_for: 'long_term_open', drinking: 'no', smoking: 'no' },
+    [pic('women', 57), pic('women', 58)],
+    [['Two truths and a lie', "I've run a marathon, I can juggle, I hate chocolate."]]],
+  ['Pooja', 29, 'woman', 'man', 'Marathahalli, Bengaluru', 12.956, 77.701,
+    { height_cm: 159, job_title: 'Teacher', education: 'undergrad', looking_for: 'not_sure' },
+    [pic('women', 71), pic('women', 72)],
+    [['Typical Sunday', 'Long walks and longer phone calls with my mom.']]],
   ['Sam', 27, 'nonbinary', 'everyone', 'Indiranagar, Bengaluru', 12.972, 77.640,
     { height_cm: 170, job_title: 'Illustrator', education: 'undergrad', looking_for: 'friends', drinking: 'sometimes', smoking: 'no', kids: 'dont_want' },
     [pic('lego', 3), pic('lego', 4)],
@@ -67,9 +81,21 @@ const people = [
 
 const insertUser = db.prepare(
   `INSERT INTO users (email, password_hash, name, birthdate, gender, interested_in, city, latitude, longitude,
-                      height_cm, job_title, education, looking_for, drinking, smoking, kids, bio, filters)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                      height_cm, job_title, education, looking_for, drinking, smoking, kids, bio, hometown, filters)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 );
+const insertSwipe = db.prepare('INSERT OR IGNORE INTO swipes (swiper_id, target_id, liked) VALUES (?, ?, 1)');
+const insertMatch = db.prepare("INSERT OR IGNORE INTO matches (user_a, user_b, created_at) VALUES (?, ?, datetime('now', ?))");
+const matchId = db.prepare('SELECT id FROM matches WHERE user_a = ? AND user_b = ?');
+const insertMessage = db.prepare("INSERT INTO messages (match_id, sender_id, body, created_at) VALUES (?, ?, ?, datetime('now', ?))");
+const makeSuper = db.prepare('UPDATE swipes SET super = 1 WHERE swiper_id = ? AND target_id = ?');
+
+// The demo user's existing matches: [name, matched how long ago, messages [fromDemo, text, how long ago]].
+const MATCHES = [
+  ['Tanvi', '-5 hours', []],
+  ['Divya', '-2 days', [[false, 'Hey! Saw you like filter coffee too ☕', '-1 day'], [true, 'Guilty. Where do you usually go?', '-20 hours'], [false, 'What are you doing this weekend?', '-3 hours']]],
+  ['Pooja', '-3 days', []],
+];
 const insertPhoto = db.prepare('INSERT INTO photos (user_id, url) VALUES (?, ?)');
 const insertPrompt = db.prepare('INSERT INTO prompts (user_id, position, prompt, answer) VALUES (?, ?, ?, ?)');
 const like = db.prepare('INSERT OR IGNORE INTO swipes (swiper_id, target_id, liked, comment, liked_item) VALUES (?, ?, 1, ?, ?)');
@@ -94,7 +120,7 @@ transaction(db, () => {
     const { lastInsertRowid: id } = insertUser.run(
       email, hash, name, birthdate(age), gender, interestedIn, city, lat, lon,
       d.height_cm ?? null, d.job_title ?? '', d.education ?? null, d.looking_for ?? null,
-      d.drinking ?? null, d.smoking ?? null, d.kids ?? null, d.bio ?? '', JSON.stringify(DEFAULT_FILTERS),
+      d.drinking ?? null, d.smoking ?? null, d.kids ?? null, d.bio ?? '', d.hometown ?? '', JSON.stringify(DEFAULT_FILTERS),
     );
     photos.forEach((url) => insertPhoto.run(id, url));
     prompts.forEach(([prompt, answer], i) => insertPrompt.run(id, i, prompt, answer));
@@ -104,6 +130,20 @@ transaction(db, () => {
       const note = likeNotes[likeIndex++ % likeNotes.length];
       like.run(id, demo.id, note.comment, JSON.stringify(note.item(demo)));
     }
+  }
+  if (!demo) return; // already seeded
+
+  // Isha's like is a SuperSwipe, so she's first in Liked You.
+  makeSuper.run(byEmail.get('isha@example.com').id, demo.id);
+
+  for (const [name, ago, messages] of MATCHES) {
+    const other = byEmail.get(`${name.toLowerCase()}@example.com`).id;
+    insertSwipe.run(demo.id, other);
+    insertSwipe.run(other, demo.id);
+    const [a, b] = demo.id < other ? [demo.id, other] : [other, demo.id];
+    insertMatch.run(a, b, ago);
+    const { id } = matchId.get(a, b);
+    for (const [fromDemo, body, when] of messages) insertMessage.run(id, fromDemo ? demo.id : other, body, when);
   }
 });
 

@@ -57,6 +57,14 @@ const DETAIL_ENUMS = {
   kids: KIDS,
 };
 
+const REPORT_REASONS = {
+  fake: 'Fake profile or scam',
+  photos: 'Inappropriate photos',
+  abusive: 'Offensive or abusive messages',
+  underage: 'May be under 18',
+  other: 'Something else',
+};
+
 const LIMITS = {
   minPhotos: 2,
   maxPhotos: 6,
@@ -65,6 +73,8 @@ const LIMITS = {
   minHeight: 120,
   maxHeight: 230,
   maxDistanceKm: 500,
+  superSwipesPerDay: 3,
+  matchExpiryHours: 24, // a new match expires if nobody sends a message in time
 };
 
-module.exports = { GENDERS, INTERESTS, LOOKING_FOR, EDUCATION, HABITS, KIDS, PROMPTS, DETAIL_ENUMS, LIMITS };
+module.exports = { GENDERS, INTERESTS, LOOKING_FOR, EDUCATION, HABITS, KIDS, PROMPTS, DETAIL_ENUMS, REPORT_REASONS, LIMITS };

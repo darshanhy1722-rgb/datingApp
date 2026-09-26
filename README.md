@@ -4,10 +4,10 @@ A full-stack dating app in the style of Hinge and Bumble: build a profile with p
 prompts, browse people near you who match your filters, like a specific photo or prompt
 (optionally with a comment), see who liked you, match, and chat.
 
-**Design:** a mobile-first app shell (phone-sized and centred on desktop) with a bottom tab
-bar. It uses warm honey-yellow accents in the style of Bumble, editorial serif headings and white
-prompt cards in the style of Hinge, bottom sheets, toasts, loading placeholders, and an animated
-"It's a match!" screen.
+**Design:** a mobile-first app shell (phone-sized and centred on desktop) in a Bumble-like
+style: white screens, bold sans-serif type, black buttons, warm yellow accents, and a bottom tab
+bar with **Profile · Discover · People · Liked You · Chats**. It also has bottom sheets, toasts,
+loading placeholders and an animated "It's a match!" screen.
 
 - **Backend:** Node.js + Express, with Node's built-in SQLite (`node:sqlite`), so there are no native dependencies
 - **Frontend:** plain HTML/CSS/JS served by the same server, with no build step
@@ -25,21 +25,26 @@ prompt cards in the style of Hinge, bottom sheets, toasts, loading placeholders,
    Exact coordinates are rounded to about 100 m and never shown to anyone. Others only see your area and a distance.
 4. **About you:** height, what you're looking for, job, education, drinking, smoking, children, and a bio.
 
-**Discover**
-- Full scrollable profiles: name, photos between prompt answers, and a "vitals" card (age, height, distance, job, education…)
+**People (one profile at a time)**
+- Full scrollable profile: main photo with name and age, "My basics" chips, prompts between photos, and a "My location" card ("Lives in…", "From…", distance)
 - You only see people whose gender matches who you want to see, **and** who want to see your gender
-- Tap ♥ on a **specific photo or prompt** to like it, optionally with a comment that becomes the first message if you match. Tap ✕ to pass. Keyboard: → / ←
+- At the end: **✕** pass, **★ SuperSwipe** (3 a day; you appear first in their Liked You), **♥** like. You can also drag the main photo left or right. Keyboard: ← ↑ →
+- **Note** on any photo or prompt: like it with a message that starts your chat if you match
+- **Block** and **Report** (with a reason) on every profile and in chat. Both hide you from each other everywhere.
+
+**Discover (daily picks)**
+- "Recommended for you" carousel ranked by what you have in common (same goals, prompts you both answered, same area or hometown…), with the reason shown on each card
+- "Near you" carousel, and a "New picks in X hours" timer. Picks change once a day.
 
 **Filters**
 - Show me (Women / Men / Everyone), age range, maximum distance, height range
 - Looking for, education, drinking, smoking, children. Leave any of these empty to see everyone.
 - Age ranges work both ways: you won't see people whose age range excludes you
 
-**Likes You, chats and profile**
-- The **Likes** tab shows who liked you, what they liked ("Liked your photo" / "Liked your prompt") and their comment. Tap **Match** to match instantly.
-- **Chats** has a row of new matches plus conversations, with **"Your move"** badges when it's your turn to reply (like Bumble)
-- In a new chat, conversation starters are suggested from the other person's prompts
-- **Profile** shows a profile-strength ring, **Edit / View** tabs (see your profile as others do), dating filters and log out
+**Liked You, Chats and Profile**
+- **Liked You**: filter chips **All · Notes · SuperSwipes · New · Nearby** with counts. SuperSwipes come first, and each tile says what they liked. Like back to match instantly.
+- **Chats**: "Your matches" with a yellow **24-hour countdown ring**. A new match expires if nobody says hi within 24 hours. Recent chats show a **"Your move"** badge. There's search, conversation starters based on their prompts, and unmatch / block / report from the ⋯ menu.
+- **Profile**: completion ring, **Edit profile** (edit or preview), SuperSwipe and Filters cards, a "finish your profile" card and checklist, a **Safety and wellbeing** tab, and settings
 
 ## Getting started
 
@@ -52,7 +57,8 @@ npm start      # http://localhost:3000
 ```
 
 With the seed data, log in as `demo@example.com` / `password123`. Several demo profiles have
-already liked the demo user, so check the **Likes** tab. Every demo account (`ananya@example.com`,
+already liked the demo user (one with a SuperSwipe), so check **Liked You**. **Chats** has a new
+match with the countdown running, an active conversation and an expired match. Every demo account (`ananya@example.com`,
 `priya@example.com`, …) uses the same password.
 
 Environment variables: `PORT` (default `3000`), `DB_PATH` (default `./dating.db`) and
@@ -91,9 +97,12 @@ All endpoints except signup, login and options need an `Authorization: Bearer <t
 | POST | `/api/me/photos` | Raw image body (JPEG/PNG/WebP, max 8 MB) |
 | DELETE | `/api/me/photos/:id` | Remove a photo |
 | GET | `/api/discover` | Up to 20 people who pass both sides' filters, closest first |
-| POST | `/api/swipes` | `{ target_id, liked, comment?, item? }` → `{ matched, match_id? }`. `item` is `{ type: "photo", photo_id }` or `{ type: "prompt", prompt }` |
-| GET | `/api/likes` | People who liked you, with their comment and the photo or prompt they liked |
-| GET | `/api/matches` | Your matches with the latest message and who sent it |
+| POST | `/api/swipes` | `{ target_id, liked, comment?, item?, super? }` → `{ matched, match_id?, super_swipes_left }`. `item` is `{ type: "photo", photo_id }` or `{ type: "prompt", prompt }` |
+| GET | `/api/recommended` | Daily picks with `common_ground` reasons, plus people near you |
+| GET | `/api/likes` | People who liked you (SuperSwipes first), with their note and what they liked |
+| GET | `/api/matches` | Your matches with the latest message, who sent it, and `expires_at` / `expired` |
+| POST | `/api/users/:id/block` | Block someone; removes any match |
+| POST | `/api/users/:id/report` | `{ reason, details? }`. Report and block someone |
 | DELETE | `/api/matches/:id` | Unmatch |
 | GET | `/api/matches/:id/messages?after=<id>` | Messages, optionally only those newer than `after` |
 | POST | `/api/matches/:id/messages` | `{ body }` → send a message |
