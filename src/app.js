@@ -18,7 +18,7 @@ const {
   DEFAULT_FILTERS,
 } = require('./profile');
 
-const { PROMPTS, LIMITS, REPORT_REASONS, LOOKING_FOR, KIDS } = options;
+const { PROMPTS, LIMITS, REPORT_REASONS, LOOKING_FOR, KIDS, TERMS_VERSION } = options;
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_COMMENT_LENGTH = 300;
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
@@ -65,6 +65,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     insertPrompt: db.prepare('INSERT INTO prompts (user_id, position, prompt, answer) VALUES (?, ?, ?, ?)'),
 
     updateFilters: db.prepare('UPDATE users SET filters = ? WHERE id = ?'),
+    acceptTerms: db.prepare("UPDATE users SET terms_version = ?, terms_accepted_at = datetime('now') WHERE id = ?"),
 
     upsertSwipe: db.prepare(
       `INSERT INTO swipes (swiper_id, target_id, liked, comment, liked_item, super) VALUES (?, ?, ?, ?, ?, ?)
@@ -175,6 +176,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
       filters: parseFilters(u.filters),
       missing,
       profile_complete: missing.length === 0,
+      terms_accepted: u.terms_version === TERMS_VERSION,
       super_swipes_left: Math.max(0, LIMITS.superSwipesPerDay - q.superSwipesToday.get(u.id).n),
     };
   }
@@ -201,7 +203,11 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     next();
   }
 
+  // Browsing, liking and messaging need a finished profile and the current Terms accepted.
   function requireComplete(req, _res, next) {
+    if (req.user.terms_version !== TERMS_VERSION) {
+      return next(new HttpError(403, 'Please accept the Terms & Conditions and Privacy Policy first'));
+    }
     if (missingSteps(req.user).length) return next(new HttpError(403, 'Finish setting up your profile first'));
     next();
   }
@@ -231,16 +237,19 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     for (const field of ['name', 'gender', 'interested_in']) {
       if (body[field] === undefined) throw new HttpError(400, `${field} is required`);
     }
+    if (body.accept_terms !== true) {
+      throw new HttpError(400, 'Please confirm you are 18+ and accept the Terms & Conditions and Privacy Policy');
+    }
     const birthdate = validateBirthdate(body.birthdate);
     const d = validateDetails({ name: body.name, gender: body.gender, interested_in: body.interested_in });
     if (q.userByEmail.get(email)) throw new HttpError(409, 'An account with that email already exists');
 
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO users (email, password_hash, name, birthdate, gender, interested_in, filters)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (email, password_hash, name, birthdate, gender, interested_in, filters, terms_version, terms_accepted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
       )
-      .run(email, hashPassword(body.password), d.name, birthdate, d.gender, d.interested_in, JSON.stringify(DEFAULT_FILTERS));
+      .run(email, hashPassword(body.password), d.name, birthdate, d.gender, d.interested_in, JSON.stringify(DEFAULT_FILTERS), TERMS_VERSION);
     const user = q.userById.get(lastInsertRowid);
     const token = newToken();
     q.insertSession.run(token, user.id);
@@ -276,6 +285,15 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
       const sets = fields.map((f) => `${f} = ?`).join(', ');
       db.prepare(`UPDATE users SET ${sets} WHERE id = ?`).run(...fields.map((f) => changes[f]), req.user.id);
     }
+    res.json({ user: ownProfile(q.userById.get(req.user.id)) });
+  });
+
+  // For people who signed up before the current Terms (or before Terms existed).
+  app.post('/api/me/accept-terms', requireAuth, (req, res) => {
+    if ((req.body || {}).version !== TERMS_VERSION) {
+      throw new HttpError(409, 'The Terms have changed. Please reload and review the latest version.');
+    }
+    q.acceptTerms.run(TERMS_VERSION, req.user.id);
     res.json({ user: ownProfile(q.userById.get(req.user.id)) });
   });
 
@@ -551,7 +569,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     res.json({ messages: q.messagesAfter.all(match.id, after) });
   });
 
-  app.post('/api/matches/:id/messages', requireAuth, (req, res) => {
+  app.post('/api/matches/:id/messages', requireAuth, requireComplete, (req, res) => {
     const match = loadMatch(req);
     const body = text((req.body || {}).body ?? '', 'body', MAX_MESSAGE_LENGTH);
     if (!body) throw new HttpError(400, 'Message cannot be empty');

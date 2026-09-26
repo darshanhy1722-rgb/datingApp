@@ -50,6 +50,11 @@ accent colour (**Honey** yellow, **Rose** pink, **Ocean** blue, **Lavender** pur
 - **Chats**: "Your matches" with a yellow **24-hour countdown ring**. A new match expires if nobody says hi within 24 hours. Recent chats show a **"Your move"** badge. There's search, conversation starters based on their prompts, and unmatch / block / report from the ⋯ menu.
 - **Profile**: completion ring, **Edit profile** (edit or preview), SuperSwipe and Filters cards, a "finish your profile" card and checklist, a **Safety and wellbeing** tab, and settings
 
+**Terms & Privacy**
+- Signing up requires ticking "I'm 18 or older and I agree to the Terms & Conditions and Privacy Policy". The server rejects signups without it and records which version was accepted and when.
+- Draft pages at `/terms.html` and `/privacy.html`, written for India (IT Act & IT Rules 2021, DPDP Act 2023). **Replace the [bracketed placeholders] and have a lawyer review them before launch.**
+- When the Terms change, bump `TERMS_VERSION` in `src/options.js`. Everyone is then asked to accept the new version the next time they open the app, and browsing, liking and messaging are blocked until they do.
+
 ## Getting started
 
 Requires Node.js 22.5 or newer.
@@ -91,7 +96,8 @@ All endpoints except signup, login and options need an `Authorization: Bearer <t
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/options` | Genders, prompts, filter choices and limits |
-| POST | `/api/signup` | `{ email, password, name, birthdate, gender, interested_in }` → `{ token, user }` |
+| POST | `/api/signup` | `{ email, password, name, birthdate, gender, interested_in, accept_terms: true }` → `{ token, user }` |
+| POST | `/api/me/accept-terms` | `{ version }`. Accept the current Terms (for accounts created before them) |
 | POST | `/api/login` | `{ email, password }` → `{ token, user }` |
 | POST | `/api/logout` | End the current session |
 | GET | `/api/me` | Your profile, filters and which setup steps are still `missing` |

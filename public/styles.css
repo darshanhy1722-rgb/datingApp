@@ -788,3 +788,15 @@ button.list-row:hover { background: var(--soft); }
 .swatch-dot .icon { width: 22px; height: 22px; opacity: 0; }
 .swatch.active .swatch-dot .icon { opacity: 1; }
 .swatch-dot svg { stroke-width: 3; }
+
+/* ---------- Terms tick box ---------- */
+
+.consent { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 16px; background: var(--chip); font-size: 0.95rem; line-height: 1.45; color: var(--ink-2); cursor: pointer; }
+.consent input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.consent-box { flex: none; width: 24px; height: 24px; margin-top: 1px; border-radius: 7px; border: 2px solid var(--muted); display: grid; place-items: center; color: transparent; background: var(--surface); transition: all 0.15s ease; }
+.consent-box .icon { width: 15px; height: 15px; }
+.consent-box svg { stroke-width: 3; }
+.consent input:checked + .consent-box { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
+.consent input:focus-visible + .consent-box { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 80%, transparent); }
+.consent a { color: var(--ink); font-weight: 700; }
+.welcome-copy .fine a { color: inherit; font-weight: 700; }
