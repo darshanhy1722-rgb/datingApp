@@ -63,9 +63,10 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     updateFilters: db.prepare('UPDATE users SET filters = ? WHERE id = ?'),
 
     upsertSwipe: db.prepare(
-      `INSERT INTO swipes (swiper_id, target_id, liked, comment) VALUES (?, ?, ?, ?)
+      `INSERT INTO swipes (swiper_id, target_id, liked, comment, liked_item) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (swiper_id, target_id)
-       DO UPDATE SET liked = excluded.liked, comment = excluded.comment, created_at = datetime('now')`,
+       DO UPDATE SET liked = excluded.liked, comment = excluded.comment, liked_item = excluded.liked_item,
+                     created_at = datetime('now')`,
     ),
     likeFrom: db.prepare('SELECT comment FROM swipes WHERE swiper_id = ? AND target_id = ? AND liked = 1'),
     insertMatch: db.prepare('INSERT OR IGNORE INTO matches (user_a, user_b) VALUES (?, ?)'),
@@ -86,7 +87,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
          AND NOT EXISTS (SELECT 1 FROM swipes s WHERE s.swiper_id = :me AND s.target_id = u.id)`,
     ),
     likesMe: db.prepare(
-      `SELECT u.*, s.comment AS like_comment, s.created_at AS liked_at
+      `SELECT u.*, s.comment AS like_comment, s.liked_item, s.created_at AS liked_at
        FROM swipes s JOIN users u ON u.id = s.swiper_id
        WHERE s.target_id = :me AND s.liked = 1
          AND NOT EXISTS (SELECT 1 FROM swipes mine WHERE mine.swiper_id = :me AND mine.target_id = u.id)
@@ -95,7 +96,8 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     matches: db.prepare(
       `SELECT m.id AS match_id, m.created_at AS matched_at, u.*,
               (SELECT body FROM messages WHERE match_id = m.id ORDER BY id DESC LIMIT 1) AS last_message,
-              (SELECT created_at FROM messages WHERE match_id = m.id ORDER BY id DESC LIMIT 1) AS last_message_at
+              (SELECT created_at FROM messages WHERE match_id = m.id ORDER BY id DESC LIMIT 1) AS last_message_at,
+              (SELECT sender_id FROM messages WHERE match_id = m.id ORDER BY id DESC LIMIT 1) AS last_sender_id
        FROM matches m
        JOIN users u ON u.id = CASE WHEN m.user_a = :me THEN m.user_b ELSE m.user_a END
        WHERE m.user_a = :me OR m.user_b = :me
@@ -330,12 +332,42 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     return pass ? pass.distance : null;
   }
 
+  // Checks that a liked photo/prompt really is on the target's profile; returns what to store.
+  function validateLikedItem(item, target) {
+    if (item === undefined || item === null) return null;
+    if (item.type === 'photo') {
+      const photoId = int(item.photo_id, 'photo_id', 1, Number.MAX_SAFE_INTEGER);
+      if (!q.photoById.get(photoId, target.id)) throw new HttpError(400, 'That photo is not on their profile');
+      return { type: 'photo', photo_id: photoId };
+    }
+    if (item.type === 'prompt') {
+      if (!q.prompts.all(target.id).some((p) => p.prompt === item.prompt)) {
+        throw new HttpError(400, 'That prompt is not on their profile');
+      }
+      return { type: 'prompt', prompt: item.prompt };
+    }
+    throw new HttpError(400, 'item.type must be photo or prompt');
+  }
+
+  // Turns a stored liked item into something the liked person can display.
+  function describeLikedItem(json, owner) {
+    if (!json) return null;
+    const item = JSON.parse(json);
+    if (item.type === 'photo') {
+      const photo = q.photoById.get(item.photo_id, owner.id);
+      return photo ? { type: 'photo', url: photo.url } : null;
+    }
+    const prompt = q.prompts.all(owner.id).find((p) => p.prompt === item.prompt);
+    return prompt ? { type: 'prompt', prompt: prompt.prompt, answer: prompt.answer } : null;
+  }
+
   // People who liked me and are waiting for my answer.
   app.get('/api/likes', requireAuth, (req, res) => {
     const rows = q.likesMe.all({ me: req.user.id });
     res.json({
       likes: rows.map((u) => ({
         comment: u.like_comment,
+        item: describeLikedItem(u.liked_item, req.user),
         liked_at: u.liked_at,
         profile: publicProfile(u, distanceBetween(req.user, u)),
       })),
@@ -350,9 +382,10 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     if (targetId === req.user.id) throw new HttpError(400, "You can't like yourself");
     const target = q.userById.get(targetId);
     if (!target) throw new HttpError(404, 'User not found');
+    const item = liked ? validateLikedItem(req.body.item, target) : null;
 
     const result = transaction(db, () => {
-      q.upsertSwipe.run(req.user.id, targetId, liked ? 1 : 0, comment);
+      q.upsertSwipe.run(req.user.id, targetId, liked ? 1 : 0, comment, item && JSON.stringify(item));
       const theirLike = liked && q.likeFrom.get(targetId, req.user.id);
       if (!theirLike) return { matched: false };
 
@@ -380,6 +413,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
         matched_at: r.matched_at,
         last_message: r.last_message,
         last_message_at: r.last_message_at,
+        last_sender_id: r.last_sender_id,
         profile: publicProfile(r, distanceBetween(req.user, r)),
       })),
     });

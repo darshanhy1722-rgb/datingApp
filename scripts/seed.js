@@ -72,14 +72,21 @@ const insertUser = db.prepare(
 );
 const insertPhoto = db.prepare('INSERT INTO photos (user_id, url) VALUES (?, ?)');
 const insertPrompt = db.prepare('INSERT INTO prompts (user_id, position, prompt, answer) VALUES (?, ?, ?, ?)');
-const like = db.prepare('INSERT OR IGNORE INTO swipes (swiper_id, target_id, liked, comment) VALUES (?, ?, 1, ?)');
+const like = db.prepare('INSERT OR IGNORE INTO swipes (swiper_id, target_id, liked, comment, liked_item) VALUES (?, ?, 1, ?, ?)');
+const photosOf = db.prepare('SELECT id FROM photos WHERE user_id = ? ORDER BY id');
 const byEmail = db.prepare('SELECT id FROM users WHERE email = ?');
 
 const hash = hashPassword(PASSWORD);
-const comments = ['Your first-date idea sounds perfect 😄', '', 'Okay but which dosa place wins?', ''];
+// What each like was on: the demo user's photos and prompts, Hinge-style.
+const likeNotes = [
+  { comment: 'Your first-date idea sounds perfect 😄', item: (demo) => ({ type: 'prompt', prompt: demo.prompts[0] }) },
+  { comment: '', item: (demo) => ({ type: 'photo', photo_id: demo.photoIds[1] }) },
+  { comment: 'Okay but which keyboard switches?', item: (demo) => ({ type: 'prompt', prompt: demo.prompts[1] }) },
+  { comment: 'Great smile!', item: (demo) => ({ type: 'photo', photo_id: demo.photoIds[0] }) },
+];
 
 transaction(db, () => {
-  let demoId;
+  let demo;
   let likeIndex = 0;
   for (const [name, age, gender, interestedIn, city, lat, lon, d, photos, prompts, likesDemo] of people) {
     const email = `${name.toLowerCase()}@example.com`;
@@ -91,8 +98,12 @@ transaction(db, () => {
     );
     photos.forEach((url) => insertPhoto.run(id, url));
     prompts.forEach(([prompt, answer], i) => insertPrompt.run(id, i, prompt, answer));
-    if (name === 'Demo') demoId = id;
-    else if (likesDemo && demoId) like.run(id, demoId, comments[likeIndex++ % comments.length]);
+    if (name === 'Demo') {
+      demo = { id, photoIds: photosOf.all(id).map((p) => p.id), prompts: prompts.map(([prompt]) => prompt) };
+    } else if (likesDemo && demo) {
+      const note = likeNotes[likeIndex++ % likeNotes.length];
+      like.run(id, demo.id, note.comment, JSON.stringify(note.item(demo)));
+    }
   }
 });
 

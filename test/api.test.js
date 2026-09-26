@@ -308,3 +308,61 @@ test('swipe validation', async () => {
   const incomplete = await signup();
   assert.equal((await post({ target_id: a.user.id, liked: true }, incomplete.token)).status, 403);
 });
+
+test('liking a specific photo or prompt (Hinge-style)', async () => {
+  const a = await completeUser({ gender: 'man', interested_in: 'woman' });
+  const b = await completeUser({ gender: 'woman', interested_in: 'man' });
+  const c = await completeUser({ gender: 'woman', interested_in: 'man' });
+  const like = (token, body) => call('POST', '/api/swipes', { token, body });
+
+  // The item must exist on the liked person's profile.
+  const otherPhoto = c.user.photos[0].id;
+  assert.equal((await like(a.token, { target_id: b.user.id, liked: true, item: { type: 'photo', photo_id: otherPhoto } })).status, 400);
+  assert.equal((await like(a.token, { target_id: b.user.id, liked: true, item: { type: 'prompt', prompt: 'Typical Sunday' } })).status, 400);
+  assert.equal((await like(a.token, { target_id: b.user.id, liked: true, item: { type: 'video' } })).status, 400);
+
+  const photo = b.user.photos[1];
+  assert.equal((await like(a.token, { target_id: b.user.id, liked: true, item: { type: 'photo', photo_id: photo.id }, comment: 'Great shot' })).status, 200);
+  assert.equal((await like(a.token, { target_id: c.user.id, liked: true, item: { type: 'prompt', prompt: 'A perfect first date' } })).status, 200);
+
+  const bLikes = (await call('GET', '/api/likes', { token: b.token })).data.likes;
+  assert.deepEqual(bLikes[0].item, { type: 'photo', url: photo.url });
+  assert.equal(bLikes[0].comment, 'Great shot');
+  const cLikes = (await call('GET', '/api/likes', { token: c.token })).data.likes;
+  assert.deepEqual(cLikes[0].item, { type: 'prompt', prompt: 'A perfect first date', answer: 'Street food and a long walk' });
+
+  // If the liked photo is deleted, the like stays but without the item.
+  await call('DELETE', `/api/me/photos/${photo.id}`, { token: b.token });
+  assert.equal((await call('GET', '/api/likes', { token: b.token })).data.likes[0].item, null);
+});
+
+test('matches report who sent the last message ("your move")', async () => {
+  const a = await completeUser({ gender: 'man', interested_in: 'woman' });
+  const b = await completeUser({ gender: 'woman', interested_in: 'man' });
+  await call('POST', '/api/swipes', { token: a.token, body: { target_id: b.user.id, liked: true } });
+  const { data } = await call('POST', '/api/swipes', { token: b.token, body: { target_id: a.user.id, liked: true } });
+  let m = (await call('GET', '/api/matches', { token: a.token })).data.matches[0];
+  assert.equal(m.last_sender_id, null);
+  await call('POST', `/api/matches/${data.match_id}/messages`, { token: b.token, body: { body: 'Hey!' } });
+  m = (await call('GET', '/api/matches', { token: a.token })).data.matches[0];
+  assert.equal(m.last_sender_id, b.user.id);
+});
+
+test('upgrading a v2 database keeps existing data', () => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { openDb } = require('../src/db');
+  const file = path.join(uploadDir, 'v2.db');
+  const old = new DatabaseSync(file);
+  old.exec(`CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT);
+            CREATE TABLE swipes (swiper_id INTEGER, target_id INTEGER, liked INTEGER, comment TEXT NOT NULL DEFAULT '',
+                                 created_at TEXT, PRIMARY KEY (swiper_id, target_id));
+            INSERT INTO users (id, email) VALUES (1, 'kept@example.com');
+            INSERT INTO swipes (swiper_id, target_id, liked) VALUES (1, 2, 1);
+            PRAGMA user_version = 2;`);
+  old.close();
+  const db = openDb(file);
+  assert.equal(db.prepare('SELECT email FROM users').get().email, 'kept@example.com');
+  assert.equal(db.prepare('SELECT liked_item FROM swipes').get().liked_item, null);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+  db.close();
+});
