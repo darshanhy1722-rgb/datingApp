@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#FFC629" />
+  <meta name="theme-color" content="#ffffff" />
   <title>Spark</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -20,13 +20,13 @@
           <div class="float-card c1"><span>A</span><p>A perfect first date</p><b>Filter coffee &amp; a long walk</b></div>
           <div class="float-card c2"><span>R</span><p>Typical Sunday</p><b>Dosa, then a nap</b></div>
           <div class="float-card c3"><span>K</span><p>I geek out on</p><b>Telescopes</b></div>
-          <div class="float-heart h1"></div>
-          <div class="float-heart h2"></div>
+          <div class="float-badge b1" data-icon="heart"></div>
+          <div class="float-badge b2" data-icon="star"></div>
         </div>
         <div class="welcome-copy">
           <div class="brand" data-icon="spark">Spark</div>
-          <h1 class="display">Date with <em>intention.</em></h1>
-          <p>Real profiles, thoughtful prompts, and people who actually want to meet.</p>
+          <h1 class="display">Make the first move.</h1>
+          <p>Meet people who share your vibe, and start conversations that go somewhere.</p>
           <button class="btn btn-primary btn-block" id="go-signup">Create account</button>
           <button class="btn btn-ghost btn-block" id="go-login">I already have an account</button>
           <p class="fine">You must be 18 or older to use Spark.</p>
@@ -66,14 +66,47 @@
         </div>
       </section>
 
-      <!-- Discover -->
-      <section id="view-discover" class="view">
+      <!-- People: one profile at a time -->
+      <section id="view-people" class="view">
         <header class="bar">
-          <div class="brand small" data-icon="spark">Spark</div>
-          <button class="icon-btn" id="open-filters" data-icon="sliders" aria-label="Dating filters"></button>
+          <div class="brand" data-icon="spark">Spark</div>
+          <button class="icon-btn" data-open="filters" data-icon="filter" aria-label="Dating filters"></button>
         </header>
         <div id="deck" class="deck"></div>
-        <button class="fab-pass hidden" id="pass-btn" data-icon="x" aria-label="Pass"></button>
+      </section>
+
+      <!-- Discover: daily recommendations -->
+      <section id="view-discover" class="view">
+        <header class="bar">
+          <h1 class="display title">Discover</h1>
+          <button class="icon-btn" id="discover-help" data-icon="help" aria-label="How Discover works"></button>
+        </header>
+        <div class="pad-x">
+          <span class="pill-honey" id="refresh-pill"></span>
+          <p class="lead">Connect over common ground with people who match your vibe, refreshed every day.</p>
+        </div>
+        <div id="discover-body"></div>
+      </section>
+
+      <!-- Liked You -->
+      <section id="view-likes" class="view">
+        <header class="bar">
+          <h1 class="display title">Liked You</h1>
+          <button class="icon-btn" data-open="filters" data-icon="filter" aria-label="Dating filters"></button>
+        </header>
+        <p class="lead pad-x">They're into you! If you're into them too, like them back to match instantly.</p>
+        <div class="chip-row" id="likes-chips"></div>
+        <div id="likes-grid" class="likes-grid"></div>
+      </section>
+
+      <!-- Someone's full profile -->
+      <section id="view-person" class="view">
+        <header class="bar">
+          <button class="icon-btn" id="person-back" data-icon="back" aria-label="Back"></button>
+          <h2 class="bar-title" id="person-title"></h2>
+          <span class="icon-btn-spacer"></span>
+        </header>
+        <div id="person-body" class="deck"></div>
       </section>
 
       <!-- Filters -->
@@ -86,30 +119,15 @@
         <form id="filters-form" class="filters"></form>
       </section>
 
-      <!-- Likes You -->
-      <section id="view-likes" class="view">
-        <header class="bar"><h1 class="display title">Likes You</h1></header>
-        <p class="muted pad-x" id="likes-summary"></p>
-        <div id="likes-grid" class="likes-grid"></div>
-      </section>
-
-      <!-- Someone's profile -->
-      <section id="view-person" class="view">
-        <header class="bar">
-          <button class="icon-btn" id="person-back" data-icon="back" aria-label="Back"></button>
-          <h2 class="bar-title" id="person-title"></h2>
-          <span class="icon-btn-spacer"></span>
-        </header>
-        <div id="person-body" class="deck"></div>
-        <div class="decision-bar hidden" id="person-actions">
-          <button class="fab-pass static" id="person-pass" data-icon="x" aria-label="Pass"></button>
-          <button class="btn btn-honey" id="person-like"><span data-icon="heart"></span>Match</button>
-        </div>
-      </section>
-
       <!-- Chats -->
       <section id="view-matches" class="view">
-        <header class="bar"><h1 class="display title">Chats</h1></header>
+        <header class="bar">
+          <h1 class="display title">Chats</h1>
+          <button class="icon-btn" id="chat-search-btn" data-icon="search" aria-label="Search chats"></button>
+        </header>
+        <div class="pad-x hidden" id="chat-search-wrap">
+          <input id="chat-search" type="search" placeholder="Search your matches" autocomplete="off" />
+        </div>
         <div id="matches-body"></div>
       </section>
 
@@ -128,21 +146,38 @@
         </form>
       </section>
 
-      <!-- My profile -->
+      <!-- Profile -->
       <section id="view-profile" class="view">
-        <header class="bar"><h1 class="display title">Profile</h1></header>
+        <header class="bar">
+          <h1 class="display title">Profile</h1>
+          <div class="bar-actions">
+            <button class="icon-btn" id="safety-btn" data-icon="help" aria-label="Help and safety"></button>
+            <button class="icon-btn" id="settings-btn" data-icon="gear" aria-label="Settings"></button>
+          </div>
+        </header>
         <div id="profile-body"></div>
+      </section>
+
+      <!-- Edit profile -->
+      <section id="view-edit" class="view">
+        <header class="bar">
+          <button class="icon-btn" data-go="profile" data-icon="back" aria-label="Back"></button>
+          <h2 class="bar-title">Edit profile</h2>
+          <span class="icon-btn-spacer"></span>
+        </header>
+        <div id="edit-body"></div>
       </section>
     </main>
 
     <nav class="tabbar hidden" id="tabbar">
+      <button class="tab" data-view="profile"><span class="tab-avatar" id="tab-avatar"></span>Profile</button>
       <button class="tab" data-view="discover"><span data-icon="compass"></span>Discover</button>
-      <button class="tab" data-view="likes"><span data-icon="heart"></span>Likes<span class="badge hidden" id="likes-badge"></span></button>
+      <button class="tab" data-view="people"><span data-icon="people"></span>People</button>
+      <button class="tab" data-view="likes"><span data-icon="heart"></span>Liked You<span class="badge hidden" id="likes-badge"></span></button>
       <button class="tab" data-view="matches"><span data-icon="chat"></span>Chats<span class="dot hidden" id="chats-dot"></span></button>
-      <button class="tab" data-view="profile"><span data-icon="user"></span>Profile</button>
     </nav>
 
-    <!-- Bottom sheet (likes, confirmations, menus) -->
+    <!-- Bottom sheet (notes, menus, reports, confirmations) -->
     <div id="sheet" class="sheet-backdrop hidden">
       <div class="sheet" role="dialog" aria-modal="true">
         <div class="sheet-handle"></div>
@@ -158,7 +193,7 @@
         <h1 class="display">It's a match!</h1>
         <p id="match-text"></p>
         <button class="btn btn-primary btn-block" id="match-chat-btn">Send a message</button>
-        <button class="btn btn-ghost btn-block" id="match-close-btn">Keep browsing</button>
+        <button class="btn btn-ghost btn-block" id="match-close-btn">Keep swiping</button>
       </div>
     </div>
 

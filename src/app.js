@@ -18,11 +18,15 @@ const {
   DEFAULT_FILTERS,
 } = require('./profile');
 
-const { PROMPTS, LIMITS } = options;
+const { PROMPTS, LIMITS, REPORT_REASONS, LOOKING_FOR, KIDS } = options;
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_COMMENT_LENGTH = 300;
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const DISCOVER_PAGE_SIZE = 20;
+const RECOMMENDED_SIZE = 10;
+
+// Times in the database are UTC "YYYY-MM-DD HH:MM:SS".
+const parseDbTime = (s) => new Date(`${s.replace(' ', 'T')}Z`);
 
 // Identify uploads by their leading bytes rather than trusting the Content-Type header.
 function imageExtension(buf) {
@@ -63,16 +67,27 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     updateFilters: db.prepare('UPDATE users SET filters = ? WHERE id = ?'),
 
     upsertSwipe: db.prepare(
-      `INSERT INTO swipes (swiper_id, target_id, liked, comment, liked_item) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO swipes (swiper_id, target_id, liked, comment, liked_item, super) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (swiper_id, target_id)
        DO UPDATE SET liked = excluded.liked, comment = excluded.comment, liked_item = excluded.liked_item,
-                     created_at = datetime('now')`,
+                     super = excluded.super, created_at = datetime('now')`,
+    ),
+    superSwipesToday: db.prepare(
+      "SELECT COUNT(*) AS n FROM swipes WHERE swiper_id = ? AND super = 1 AND created_at > datetime('now', '-1 day')",
     ),
     likeFrom: db.prepare('SELECT comment FROM swipes WHERE swiper_id = ? AND target_id = ? AND liked = 1'),
     insertMatch: db.prepare('INSERT OR IGNORE INTO matches (user_a, user_b) VALUES (?, ?)'),
     matchByPair: db.prepare('SELECT * FROM matches WHERE user_a = ? AND user_b = ?'),
     matchForUser: db.prepare('SELECT * FROM matches WHERE id = ? AND (user_a = ? OR user_b = ?)'),
     deleteMatch: db.prepare('DELETE FROM matches WHERE id = ?'),
+    deleteMatchByPair: db.prepare('DELETE FROM matches WHERE user_a = ? AND user_b = ?'),
+    messageCount: db.prepare('SELECT COUNT(*) AS n FROM messages WHERE match_id = ?'),
+
+    blockedEitherWay: db.prepare(
+      'SELECT 1 FROM blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)',
+    ),
+    insertBlock: db.prepare('INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)'),
+    insertReport: db.prepare('INSERT INTO reports (reporter_id, reported_id, reason, details) VALUES (?, ?, ?, ?)'),
 
     // Candidates whose gender fits my interest and whose interest fits my gender,
     // with a complete profile, that I haven't swiped on yet. Other filters run in JS.
@@ -84,14 +99,18 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
          AND u.city != ''
          AND (SELECT COUNT(*) FROM photos p WHERE p.user_id = u.id) >= :min_photos
          AND (SELECT COUNT(*) FROM prompts p WHERE p.user_id = u.id) >= :min_prompts
-         AND NOT EXISTS (SELECT 1 FROM swipes s WHERE s.swiper_id = :me AND s.target_id = u.id)`,
+         AND NOT EXISTS (SELECT 1 FROM swipes s WHERE s.swiper_id = :me AND s.target_id = u.id)
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = :me AND b.blocked_id = u.id)
+                                                 OR (b.blocker_id = u.id AND b.blocked_id = :me))`,
     ),
     likesMe: db.prepare(
-      `SELECT u.*, s.comment AS like_comment, s.liked_item, s.created_at AS liked_at
+      `SELECT u.*, s.comment AS like_comment, s.liked_item, s.super AS super_like, s.created_at AS liked_at
        FROM swipes s JOIN users u ON u.id = s.swiper_id
        WHERE s.target_id = :me AND s.liked = 1
          AND NOT EXISTS (SELECT 1 FROM swipes mine WHERE mine.swiper_id = :me AND mine.target_id = u.id)
-       ORDER BY s.created_at DESC, s.rowid DESC`,
+         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = :me AND b.blocked_id = u.id)
+                                                 OR (b.blocker_id = u.id AND b.blocked_id = :me))
+       ORDER BY s.super DESC, s.created_at DESC, s.rowid DESC`,
     ),
     matches: db.prepare(
       `SELECT m.id AS match_id, m.created_at AS matched_at, u.*,
@@ -129,6 +148,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
       age: ageFrom(u.birthdate),
       gender: u.gender,
       city: u.city,
+      hometown: u.hometown,
       distance_km: distance === null ? null : Math.max(1, Math.round(distance)),
       bio: u.bio,
       height_cm: u.height_cm,
@@ -155,8 +175,19 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
       filters: parseFilters(u.filters),
       missing,
       profile_complete: missing.length === 0,
+      super_swipes_left: Math.max(0, LIMITS.superSwipesPerDay - q.superSwipesToday.get(u.id).n),
     };
   }
+
+  // A match with no messages expires a while after it was made (Bumble-style).
+  function matchExpiry(match, messageCount) {
+    if (messageCount > 0) return { expires_at: null, expired: false };
+    const expiresAt = new Date(parseDbTime(match.created_at).getTime() + LIMITS.matchExpiryHours * 3600 * 1000);
+    return { expires_at: expiresAt.toISOString(), expired: expiresAt <= new Date() };
+  }
+
+  const isBlocked = (a, b) => Boolean(q.blockedEitherWay.get(a, b, b, a));
+  const pairOf = (a, b) => (a < b ? [a, b] : [b, a]);
 
   // ---- Middleware ----
 
@@ -305,8 +336,8 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
 
   // ---- Discovery & likes ----
 
-  app.get('/api/discover', requireAuth, requireComplete, (req, res) => {
-    const me = req.user;
+  // Everyone who fits both people's preferences and hasn't been swiped on or blocked.
+  function eligibleCandidates(me) {
     const myFilters = parseFilters(me.filters);
     const rows = q.candidates.all({
       me: me.id,
@@ -320,11 +351,57 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
       const pass = passesFilters(me, myFilters, u, parseFilters(u.filters));
       if (pass) results.push({ u, distance: pass.distance });
     }
+    return results;
+  }
+
+  const byDistance = (a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.u.id - b.u.id;
+
+  app.get('/api/discover', requireAuth, requireComplete, (req, res) => {
     // Closest first; people without a location go last.
-    results.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity) || a.u.id - b.u.id);
+    const results = eligibleCandidates(req.user).sort(byDistance);
     res.json({
       profiles: results.slice(0, DISCOVER_PAGE_SIZE).map(({ u, distance }) => publicProfile(u, distance)),
     });
+  });
+
+  // What two people have in common, strongest first.
+  function commonGround(me, myPrompts, u, theirPrompts, distance) {
+    const found = [];
+    if (me.looking_for && me.looking_for === u.looking_for) {
+      found.push([3, `You both want: ${LOOKING_FOR[u.looking_for].toLowerCase()}`]);
+    }
+    for (const p of theirPrompts) {
+      if (myPrompts.includes(p.prompt)) found.push([2, `You both answered "${p.prompt}"`]);
+    }
+    if (me.kids && me.kids === u.kids) found.push([1, `Same plans for children: ${KIDS[u.kids].toLowerCase()}`]);
+    if (me.city && me.city === u.city) found.push([1, `You both live in ${u.city}`]);
+    else if (distance !== null && distance < 10) found.push([1, 'Lives near you']);
+    if (me.hometown && me.hometown === u.hometown) found.push([1, `You're both from ${u.hometown}`]);
+    if (me.education && me.education === u.education) found.push([1, 'Similar education']);
+    if (me.drinking && me.drinking === u.drinking) found.push([0.5, 'Similar drinking habits']);
+    found.sort((a, b) => b[0] - a[0]);
+    return { score: found.reduce((sum, [w]) => sum + w, 0), reasons: found.map(([, r]) => r) };
+  }
+
+  // A stable-per-day random number, so the picks change daily but not on every refresh.
+  function dailyShuffle(meId, userId) {
+    const day = new Date().toISOString().slice(0, 10);
+    return parseInt(crypto.createHash('sha256').update(`${day}:${meId}:${userId}`).digest('hex').slice(0, 8), 16);
+  }
+
+  app.get('/api/recommended', requireAuth, requireComplete, (req, res) => {
+    const me = req.user;
+    const myPrompts = q.prompts.all(me.id).map((p) => p.prompt);
+    const scored = eligibleCandidates(me).map((c) => {
+      const prompts = q.prompts.all(c.u.id);
+      return { ...c, ...commonGround(me, myPrompts, c.u, prompts, c.distance), shuffle: dailyShuffle(me.id, c.u.id) };
+    });
+    scored.sort((a, b) => b.score - a.score || a.shuffle - b.shuffle);
+    const recommended = scored.slice(0, RECOMMENDED_SIZE);
+    const picked = new Set(recommended.map((c) => c.u.id));
+    const nearby = scored.filter((c) => !picked.has(c.u.id) && c.distance !== null).sort(byDistance).slice(0, RECOMMENDED_SIZE);
+    const shape = ({ u, distance, reasons }) => ({ ...publicProfile(u, distance), common_ground: reasons });
+    res.json({ recommended: recommended.map(shape), nearby: nearby.map(shape) });
   });
 
   function distanceBetween(a, b) {
@@ -366,6 +443,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     const rows = q.likesMe.all({ me: req.user.id });
     res.json({
       likes: rows.map((u) => ({
+        super: Boolean(u.super_like),
         comment: u.like_comment,
         item: describeLikedItem(u.liked_item, req.user),
         liked_at: u.liked_at,
@@ -376,20 +454,25 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
 
   app.post('/api/swipes', requireAuth, requireComplete, (req, res) => {
     const { target_id, liked } = req.body || {};
+    const isSuper = req.body.super === true;
+    if (isSuper && liked !== true) throw new HttpError(400, 'A SuperSwipe must be a like');
     const targetId = int(target_id, 'target_id', 1, Number.MAX_SAFE_INTEGER);
     if (typeof liked !== 'boolean') throw new HttpError(400, 'liked must be true or false');
     const comment = liked ? text(req.body.comment ?? '', 'comment', MAX_COMMENT_LENGTH) : '';
     if (targetId === req.user.id) throw new HttpError(400, "You can't like yourself");
     const target = q.userById.get(targetId);
-    if (!target) throw new HttpError(404, 'User not found');
+    if (!target || isBlocked(req.user.id, targetId)) throw new HttpError(404, 'User not found');
+    if (isSuper && q.superSwipesToday.get(req.user.id).n >= LIMITS.superSwipesPerDay) {
+      throw new HttpError(429, `You've used all ${LIMITS.superSwipesPerDay} SuperSwipes for today`);
+    }
     const item = liked ? validateLikedItem(req.body.item, target) : null;
 
     const result = transaction(db, () => {
-      q.upsertSwipe.run(req.user.id, targetId, liked ? 1 : 0, comment, item && JSON.stringify(item));
+      q.upsertSwipe.run(req.user.id, targetId, liked ? 1 : 0, comment, item && JSON.stringify(item), isSuper ? 1 : 0);
       const theirLike = liked && q.likeFrom.get(targetId, req.user.id);
       if (!theirLike) return { matched: false };
 
-      const [a, b] = req.user.id < targetId ? [req.user.id, targetId] : [targetId, req.user.id];
+      const [a, b] = pairOf(req.user.id, targetId);
       const { changes } = q.insertMatch.run(a, b);
       const match = q.matchByPair.get(a, b);
       if (changes) {
@@ -400,7 +483,43 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
       return { matched: true, match_id: match.id };
     });
     if (result.matched) result.profile = publicProfile(target, distanceBetween(req.user, target));
+    result.super_swipes_left = Math.max(0, LIMITS.superSwipesPerDay - q.superSwipesToday.get(req.user.id).n);
     res.json(result);
+  });
+
+  // ---- Safety: block & report ----
+
+  function loadOtherUser(req) {
+    const id = int(req.params.id, 'user id', 1, Number.MAX_SAFE_INTEGER);
+    if (id === req.user.id) throw new HttpError(400, "You can't do that to yourself");
+    if (!q.userById.get(id)) throw new HttpError(404, 'User not found');
+    return id;
+  }
+
+  // Blocking hides both people from each other everywhere and removes any match.
+  function block(me, otherId) {
+    q.insertBlock.run(me, otherId);
+    q.deleteMatchByPair.run(...pairOf(me, otherId));
+  }
+
+  app.post('/api/users/:id/block', requireAuth, (req, res) => {
+    const otherId = loadOtherUser(req);
+    transaction(db, () => block(req.user.id, otherId));
+    res.status(204).end();
+  });
+
+  app.post('/api/users/:id/report', requireAuth, (req, res) => {
+    const otherId = loadOtherUser(req);
+    const { reason } = req.body || {};
+    if (!Object.hasOwn(REPORT_REASONS, reason ?? '')) {
+      throw new HttpError(400, `reason must be one of: ${Object.keys(REPORT_REASONS).join(', ')}`);
+    }
+    const details = text(req.body.details ?? '', 'details', 1000);
+    transaction(db, () => {
+      q.insertReport.run(req.user.id, otherId, reason, details);
+      block(req.user.id, otherId);
+    });
+    res.status(201).json({ reported: true });
   });
 
   // ---- Matches & chat ----
@@ -414,6 +533,7 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
         last_message: r.last_message,
         last_message_at: r.last_message_at,
         last_sender_id: r.last_sender_id,
+        ...matchExpiry({ created_at: r.matched_at }, r.last_message ? 1 : 0),
         profile: publicProfile(r, distanceBetween(req.user, r)),
       })),
     });
@@ -435,6 +555,9 @@ function createApp({ dbPath = ':memory:', uploadDir = path.join(__dirname, '..',
     const match = loadMatch(req);
     const body = text((req.body || {}).body ?? '', 'body', MAX_MESSAGE_LENGTH);
     if (!body) throw new HttpError(400, 'Message cannot be empty');
+    if (matchExpiry(match, q.messageCount.get(match.id).n).expired) {
+      throw new HttpError(410, 'This match expired because nobody said hi in time');
+    }
     res.status(201).json({ message: q.insertMessage.get(match.id, req.user.id, body) });
   });
 

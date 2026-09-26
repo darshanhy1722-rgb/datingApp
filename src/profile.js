@@ -74,6 +74,7 @@ function validateDetails(body) {
   if (has('interested_in')) out.interested_in = oneOf(body.interested_in, 'interested_in', INTERESTS);
   if (has('bio')) out.bio = text(body.bio, 'bio', 500);
   if (has('city')) out.city = text(body.city, 'city', 80);
+  if (has('hometown')) out.hometown = text(body.hometown, 'hometown', 80);
   if (has('job_title')) out.job_title = text(body.job_title, 'job_title', 60);
   if (has('height_cm')) {
     out.height_cm = isBlank(body.height_cm)

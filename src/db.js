@@ -1,6 +1,6 @@
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
   interested_in TEXT    NOT NULL CHECK (interested_in IN ('man', 'woman', 'everyone')),
   bio           TEXT    NOT NULL DEFAULT '',
   city          TEXT    NOT NULL DEFAULT '',
+  hometown      TEXT    NOT NULL DEFAULT '',
   latitude      REAL,                         -- rounded to ~100 m, never shown to others
   longitude     REAL,
   height_cm     INTEGER,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS swipes (
   liked      INTEGER NOT NULL CHECK (liked IN (0, 1)),
   comment    TEXT    NOT NULL DEFAULT '',
   liked_item TEXT,                            -- JSON: which photo or prompt was liked
+  super      INTEGER NOT NULL DEFAULT 0,      -- a SuperSwipe: shown first to the other person
   created_at TEXT    NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (swiper_id, target_id)
 );
@@ -75,6 +77,22 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS blocks (
+  blocker_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (blocker_id, blocked_id)
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  reporter_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reported_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason      TEXT    NOT NULL,
+  details     TEXT    NOT NULL DEFAULT '',
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_match ON messages(match_id, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_photos_user ON photos(user_id, id);
@@ -82,11 +100,13 @@ CREATE INDEX IF NOT EXISTS idx_prompts_user ON prompts(user_id, position);
 CREATE INDEX IF NOT EXISTS idx_swipes_target ON swipes(target_id, liked);
 `;
 
-const TABLES = ['messages', 'matches', 'swipes', 'prompts', 'photos', 'sessions', 'users'];
+const TABLES = ['reports', 'blocks', 'messages', 'matches', 'swipes', 'prompts', 'photos', 'sessions', 'users'];
 
 // Step-by-step upgrades from each older version, so existing data is kept.
 const MIGRATIONS = {
   2: 'ALTER TABLE swipes ADD COLUMN liked_item TEXT;',
+  3: `ALTER TABLE users ADD COLUMN hometown TEXT NOT NULL DEFAULT '';
+      ALTER TABLE swipes ADD COLUMN super INTEGER NOT NULL DEFAULT 0;`,
 };
 
 function openDb(path = ':memory:') {

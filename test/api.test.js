@@ -15,7 +15,9 @@ let uploadDir;
 
 before(async () => {
   uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dating-uploads-'));
-  server = createApp({ uploadDir }).listen(0);
+  const app = createApp({ uploadDir });
+  server = app.listen(0);
+  server.app = app;
   await new Promise((resolve) => server.once('listening', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -258,7 +260,7 @@ test('likes with comments, Likes You, matching and chat', async () => {
     token: a.token,
     body: { target_id: b.user.id, liked: true, comment: 'Your first-date idea is perfect' },
   });
-  assert.deepEqual(like.data, { matched: false });
+  assert.equal(like.data.matched, false);
   assert.ok(!(await discoverIds(a.token)).includes(b.user.id), 'swiped people leave the feed');
 
   const likes = await call('GET', '/api/likes', { token: b.token });
@@ -363,6 +365,112 @@ test('upgrading a v2 database keeps existing data', () => {
   const db = openDb(file);
   assert.equal(db.prepare('SELECT email FROM users').get().email, 'kept@example.com');
   assert.equal(db.prepare('SELECT liked_item FROM swipes').get().liked_item, null);
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(db.prepare('SELECT super FROM swipes').get().super, 0);
   db.close();
+});
+
+test('SuperSwipes: limited per day and shown first in Likes You', async () => {
+  const me = await completeUser({ gender: 'woman', interested_in: 'man' });
+  const fans = [];
+  for (let i = 0; i < 5; i++) fans.push(await completeUser({ gender: 'man', interested_in: 'woman' }));
+  const swipe = (token, body) => call('POST', '/api/swipes', { token, body });
+
+  assert.equal((await swipe(fans[0].token, { target_id: me.user.id, liked: false, super: true })).status, 400);
+  await swipe(fans[0].token, { target_id: me.user.id, liked: true });
+  const sup = await swipe(fans[1].token, { target_id: me.user.id, liked: true, super: true });
+  assert.equal(sup.status, 200);
+  assert.equal(sup.data.super_swipes_left, 2);
+
+  const likes = (await call('GET', '/api/likes', { token: me.token })).data.likes;
+  assert.equal(likes[0].profile.id, fans[1].user.id, 'SuperSwipes come first');
+  assert.equal(likes[0].super, true);
+  assert.equal(likes[1].super, false);
+
+  // Three per day.
+  const heavy = fans[2];
+  const targets = [me];
+  for (let i = 0; i < 3; i++) targets.push(await completeUser({ gender: 'woman', interested_in: 'man' }));
+  for (const t of targets.slice(0, 3)) {
+    assert.equal((await swipe(heavy.token, { target_id: t.user.id, liked: true, super: true })).status, 200);
+  }
+  const over = await swipe(heavy.token, { target_id: targets[3].user.id, liked: true, super: true });
+  assert.equal(over.status, 429);
+  assert.equal((await call('GET', '/api/me', { token: heavy.token })).data.user.super_swipes_left, 0);
+});
+
+test('blocking hides people both ways and removes the match', async () => {
+  const a = await completeUser({ gender: 'man', interested_in: 'woman' });
+  const b = await completeUser({ gender: 'woman', interested_in: 'man' });
+  await call('POST', '/api/swipes', { token: a.token, body: { target_id: b.user.id, liked: true } });
+  await call('POST', '/api/swipes', { token: b.token, body: { target_id: a.user.id, liked: true } });
+  assert.equal((await call('GET', '/api/matches', { token: a.token })).data.matches.length, 1);
+
+  assert.equal((await call('POST', `/api/users/${a.user.id}/block`, { token: a.token })).status, 400, 'not yourself');
+  assert.equal((await call('POST', `/api/users/${b.user.id}/block`, { token: a.token })).status, 204);
+  assert.equal((await call('GET', '/api/matches', { token: b.token })).data.matches.length, 0);
+
+  // Blocked people never see each other in Discover or Likes You, and can't like each other.
+  const fresh = await completeUser({ gender: 'woman', interested_in: 'man' });
+  await call('POST', `/api/users/${fresh.user.id}/block`, { token: a.token });
+  assert.ok(!(await discoverIds(a.token)).includes(fresh.user.id));
+  assert.ok(!(await discoverIds(fresh.token)).includes(a.user.id));
+  assert.equal((await call('POST', '/api/swipes', { token: fresh.token, body: { target_id: a.user.id, liked: true } })).status, 404);
+  assert.ok(!(await call('GET', '/api/likes', { token: a.token })).data.likes.some((l) => l.profile.id === fresh.user.id));
+  assert.equal((await call('POST', '/api/swipes', { token: a.token, body: { target_id: fresh.user.id, liked: true } })).status, 404);
+});
+
+test('reporting needs a valid reason and also blocks', async () => {
+  const a = await completeUser({ gender: 'man', interested_in: 'woman' });
+  const b = await completeUser({ gender: 'woman', interested_in: 'man' });
+  const report = (body) => call('POST', `/api/users/${b.user.id}/report`, { token: a.token, body });
+  assert.equal((await report({ reason: 'boring' })).status, 400);
+  assert.equal((await report({})).status, 400);
+  assert.equal((await report({ reason: 'fake', details: 'Asked me for money' })).status, 201);
+  assert.ok(!(await discoverIds(a.token)).includes(b.user.id));
+  const row = server.app.locals.db.prepare('SELECT reason, details FROM reports WHERE reported_id = ?').get(b.user.id);
+  assert.equal(row.reason, 'fake');
+  assert.equal(row.details, 'Asked me for money');
+});
+
+test('matches expire after 24h without a message', async () => {
+  const a = await completeUser({ gender: 'man', interested_in: 'woman' });
+  const b = await completeUser({ gender: 'woman', interested_in: 'man' });
+  await call('POST', '/api/swipes', { token: a.token, body: { target_id: b.user.id, liked: true } });
+  const { data } = await call('POST', '/api/swipes', { token: b.token, body: { target_id: a.user.id, liked: true } });
+  let m = (await call('GET', '/api/matches', { token: a.token })).data.matches[0];
+  assert.equal(m.expired, false);
+  assert.ok(new Date(m.expires_at) > new Date());
+
+  server.app.locals.db.prepare("UPDATE matches SET created_at = datetime('now', '-25 hours') WHERE id = ?").run(data.match_id);
+  m = (await call('GET', '/api/matches', { token: a.token })).data.matches[0];
+  assert.equal(m.expired, true);
+  const send = await call('POST', `/api/matches/${data.match_id}/messages`, { token: a.token, body: { body: 'Hi!' } });
+  assert.equal(send.status, 410);
+});
+
+test('a conversation that started never expires', async () => {
+  const a = await completeUser({ gender: 'man', interested_in: 'woman' });
+  const b = await completeUser({ gender: 'woman', interested_in: 'man' });
+  await call('POST', '/api/swipes', { token: a.token, body: { target_id: b.user.id, liked: true } });
+  const { data } = await call('POST', '/api/swipes', { token: b.token, body: { target_id: a.user.id, liked: true } });
+  await call('POST', `/api/matches/${data.match_id}/messages`, { token: a.token, body: { body: 'Hi!' } });
+  server.app.locals.db.prepare("UPDATE matches SET created_at = datetime('now', '-5 days') WHERE id = ?").run(data.match_id);
+  const m = (await call('GET', '/api/matches', { token: b.token })).data.matches[0];
+  assert.equal(m.expired, false);
+  assert.equal((await call('POST', `/api/matches/${data.match_id}/messages`, { token: b.token, body: { body: 'Hey' } })).status, 201);
+});
+
+test('recommendations explain what you have in common', async () => {
+  const me = await completeUser({ gender: 'nonbinary', interested_in: 'everyone', details: { looking_for: 'friends', hometown: 'Guwahati' } });
+  const twin = await completeUser({ gender: 'nonbinary', interested_in: 'everyone', details: { looking_for: 'friends', hometown: 'Guwahati' } });
+  const res = await call('GET', '/api/recommended', { token: me.token });
+  assert.equal(res.status, 200);
+  const pick = res.data.recommended.find((p) => p.id === twin.user.id);
+  assert.ok(pick, 'the most similar person is recommended');
+  assert.equal(pick.common_ground[0], 'You both want: new friends');
+  assert.ok(pick.common_ground.includes('You both answered "A perfect first date"'));
+  assert.ok(pick.common_ground.includes("You're both from Guwahati"));
+  assert.equal(pick.hometown, 'Guwahati');
+  assert.equal(res.data.recommended[0].id, twin.user.id, 'highest score first');
 });
